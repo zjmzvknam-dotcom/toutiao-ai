@@ -1,0 +1,5 @@
+streamlit
+pydantic-ai
+requests
+Pillow
+markdown
