@@ -1,4 +1,5 @@
 import streamlit as st
+from openai import OpenAI
 
 
 st.set_page_config(
@@ -10,11 +11,12 @@ st.set_page_config(
 st.title("📝 我的头条创作工具")
 
 
-st.write("输入主题，自动生成今日头条文章。")
+st.write("输入主题，AI自动生成今日头条文章。")
 
 
 topic = st.text_input(
-    "文章主题"
+    "文章主题",
+    placeholder="例如：为什么现在越来越多人不愿意存钱了"
 )
 
 
@@ -28,26 +30,52 @@ word_count = st.number_input(
 
 if st.button("🚀 开始生成文章"):
 
-    if topic:
+    if not topic:
 
-        st.success("生成成功！")
-
-        st.write(
-            f"""
-你的文章主题：
-
-{topic}
-
-
-目标字数：
-
-{word_count} 字
-
-
-下一步将接入 DeepSeek AI 自动写文章。
-"""
-        )
+        st.warning("请输入文章主题")
 
     else:
 
-        st.warning("请输入文章主题")
+        with st.spinner("AI正在创作，请稍等..."):
+
+            client = OpenAI(
+                api_key=st.secrets["DEEPSEEK_API_KEY"],
+                base_url="https://api.deepseek.com"
+            )
+
+
+            result = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一名优秀的今日头条作者，擅长写爆款中文文章。"
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""
+请写一篇今日头条文章。
+
+主题：
+{topic}
+
+字数：
+{word_count}字
+
+要求：
+1. 标题吸引人
+2. 开头抓住读者
+3. 内容分段清晰
+4. 适合手机阅读
+"""
+                    }
+                ]
+            )
+
+
+            article = result.choices[0].message.content
+
+
+            st.success("文章生成完成！")
+
+            st.write(article)
