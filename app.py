@@ -4,19 +4,20 @@ import json
 from openai import OpenAI
 
 
-# ======================
+# =========================
 # 页面设置
-# ======================
+# =========================
 
 st.set_page_config(
-    page_title="我的头条AI创作工具",
-    page_icon="📝"
+    page_title="今日头条AI创作工具",
+    page_icon="📝",
+    layout="centered"
 )
 
 
-# ======================
-# 读取Secrets
-# ======================
+# =========================
+# 读取密钥
+# =========================
 
 DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
 
@@ -25,41 +26,54 @@ CLOUDFLARE_API_TOKEN = st.secrets["CLOUDFLARE_API_TOKEN"]
 CLOUDFLARE_ACCOUNT_ID = st.secrets["CLOUDFLARE_ACCOUNT_ID"]
 
 
-# ======================
-# 标题
-# ======================
 
-st.title("📝 我的头条AI创作工具")
+# =========================
+# 标题
+# =========================
+
+st.title("📝 今日头条AI创作工具")
 
 st.write(
-    "AI标题 + 长文章 + AI配图"
+    "AI爆款标题 + AI原创文章 + AI配图"
 )
 
 
-# ======================
-# 输入
-# ======================
+
+# =========================
+# 输入区域
+# =========================
+
 
 topic = st.text_input(
-    "输入文章主题"
+    "请输入文章主题",
+    placeholder="例如：为什么越来越多人选择租房而不是买房"
 )
+
 
 
 word_count = st.number_input(
-    "目标字数",
+    "目标文章字数",
     min_value=500,
     max_value=5000,
-    value=1500
+    value=1500,
+    step=100
 )
-# ======================
-# DeepSeek AI
-# ======================
+
+
+
+# =========================
+# DeepSeek函数
+# =========================
+
 
 def deepseek(messages):
 
     client = OpenAI(
+
         api_key=DEEPSEEK_API_KEY,
+
         base_url="https://api.deepseek.com"
+
     )
 
 
@@ -78,62 +92,83 @@ def deepseek(messages):
 
 
 
-# ======================
+# =========================
 # 保存状态
-# ======================
+# =========================
+
 
 if "titles" not in st.session_state:
 
     st.session_state.titles = []
 
 
+
 if "article" not in st.session_state:
 
     st.session_state.article = None
+    # =========================
+# 生成爆款标题
+# =========================
 
-
-
-# ======================
-# 生成标题
-# ======================
 
 if st.button("🔥 生成爆款标题"):
 
 
-    if topic:
+    if not topic:
+
+        st.warning(
+            "请输入文章主题"
+        )
 
 
-        with st.spinner("正在生成标题..."):
+    else:
 
 
-            result = deepseek([
+        with st.spinner(
+            "正在生成爆款标题..."
+        ):
+
+
+            title_result = deepseek([
+
 
                 {
-                    "role":"system",
 
-                    "content":
-                    """
+                    "role": "system",
+
+                    "content": """
+
 你是一名今日头条爆款标题专家。
 
-根据用户主题生成5个标题。
+根据用户提供的主题，
+生成5个高点击标题。
+
 
 要求：
 
-1. 高点击率
+1. 有吸引力
 2. 有悬念
-3. 不夸大违规
-4. 符合中文用户阅读习惯
+3. 不使用虚假夸张词
+4. 符合今日头条用户阅读习惯
+5. 不违反平台规则
+
 
 每行输出一个标题。
+不要添加编号。
+
 """
+
                 },
 
 
                 {
-                    "role":"user",
 
-                    "content":topic
+                    "role": "user",
+
+                    "content": topic
+
                 }
+
 
             ])
 
@@ -143,259 +178,278 @@ if st.button("🔥 生成爆款标题"):
 
                 x.strip()
 
-                for x in result.split("\n")
+                for x in title_result.split("\n")
 
                 if x.strip()
 
             ]
 
 
-    else:
-
-        st.warning("请输入主题")
 
 
 
-# ======================
-# 选择标题生成文章
-# ======================
+# =========================
+# 显示标题选择
+# =========================
+
 
 if st.session_state.titles:
 
 
-    st.subheader("请选择文章标题")
+    st.subheader(
+        "请选择文章标题"
+    )
 
 
     selected_title = st.radio(
 
-        "标题",
+        "标题列表",
 
         st.session_state.titles
 
     )
 
 
-    if st.button("✍️ 开始生成文章"):
+
+    if st.button(
+        "✍️ 开始生成原创文章"
+    ):
 
 
-        with st.spinner("AI正在写文章..."):
+        with st.spinner(
+            "AI正在创作文章..."
+        ):
 
 
-            result = deepseek([
+
+            article_result = deepseek([
+
 
 
                 {
 
-                    "role":"system",
 
-                    "content":
-                    """
-你是一名今日头条高级作者。
-写作要求：
+                    "role": "system",
 
-1. 不允许使用网络常见模板句。
+                    "content": """
 
-2. 不要出现：
-“近年来”
-“随着时代发展”
-“众所周知”
-“不可否认”
-
-这类AI高频开头。
-
-3. 文章必须重新组织逻辑，
-不能简单替换同义词。
-
-4. 加入真实生活场景。
-
-5. 每篇文章必须有独立观点。
-
-6. 像一个真实作者写作，
-不要有AI腔。
-
-请严格输出JSON格式。
+你是一名优秀的今日头条原创作者。
 
 
-格式：
-
-{
-"title":"",
-"sections":[
-{
-"text":"",
-"image_prompt":""
-}
-]
-}
+请根据标题创作一篇原创文章。
 
 
-要求：
+重要要求：
 
-1. 文章总字数控制在目标字数±20%。
+
+【原创要求】
+
+1. 不复制网络文章结构。
+
+2. 不使用常见AI模板。
+
+3. 不出现：
+
+近年来
+
+随着时代发展
+
+众所周知
+
+不可否认
+
+这类AI高频词。
+
+
+4. 重新组织观点。
+
+5. 加入真实生活场景。
+
+6. 像真实作者表达观点。
+
+
+
+【字数要求】
+
+文章目标字数：
+
+由用户提供。
+
+
+允许误差：
+
+上下20%。
+
 
 例如：
-目标1500字，
-允许1200-1800字。
+
+目标1500字：
+
+1200-1800字都可以。
 
 
-2. 不要为了凑字数重复废话。
-
-3. 分成5个部分。
-
-4. 每部分内容丰富。
-
-5. 每部分生成一个详细图片描述。
-
-
-图片生成要求：
-
-每个image_prompt必须包含：
-
-人物：
-年龄、身份
-
-地点：
-办公室、出租屋、街道等
-
-动作：
-正在做什么
-
-时间：
-白天或晚上
-
-风格：
-真实摄影、新闻纪实风格
-
-
-禁止：
-动漫
-游戏人物
-幻想人物
-古代人物
-艺术插画
-
-错误：
-
-年轻人压力
-
-
-正确：
-
-年轻人在深夜出租屋内查看手机银行余额，
-桌上放着账单和电脑，
-真实摄影风格。
+不要为了凑字数重复内容。
 
 
 
-文章结构：
+【结构要求】
+
+分成5个部分。
+
 
 第一部分：
-吸引人的开头。
+
+开头吸引读者。
 
 
 第二部分：
-分析原因。
+
+分析事情原因。
 
 
 第三部分：
-真实故事案例。
+
+加入真实人物案例。
 
 
 第四部分：
-深入观点分析。
+
+深入分析观点。
 
 
 第五部分：
+
 总结并引导评论。
-"""
-                },
-
-
-                {
-
-                    "role":"user",
-
-                    "content":
-                    f"""
-标题：
-
-{selected_title}
-
-
-目标字数：
-
-{word_count}
-
-"""
-                }
-
-            ])
 
 
 
-            try:
+【输出格式】
 
-                st.session_state.article = json.loads(result)
+必须严格输出JSON。
 
 
-            except:
-
-                st.error("文章解析失败，请重新生成")
-                         # ======================
+格式：
+# =========================
 # Cloudflare AI 图片生成
-# ======================
+# =========================
+
 
 def generate_ai_image(prompt):
 
+
     try:
 
+
         url = (
+
             "https://api.cloudflare.com/client/v4/accounts/"
+
             + CLOUDFLARE_ACCOUNT_ID
+
             + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
+
         )
+
 
 
         headers = {
 
+
             "Authorization":
+
             f"Bearer {CLOUDFLARE_API_TOKEN}",
 
+
             "Content-Type":
+
             "application/json"
 
         }
 
 
+
+        final_prompt = f"""
+
+{prompt}
+
+
+要求：
+
+真实摄影照片。
+
+新闻纪实摄影风格。
+
+现代社会场景。
+
+中国现实生活环境。
+
+人物自然。
+
+禁止：
+
+文字。
+
+水印。
+
+logo。
+
+动漫。
+
+漫画。
+
+游戏人物。
+
+古代人物。
+
+幻想场景。
+
+"""
+
+
+
         data = {
 
-            "prompt": prompt
+
+            "prompt": final_prompt
 
         }
 
 
+
         response = requests.post(
+
 
             url,
 
+
             headers=headers,
+
 
             json=data,
 
+
             timeout=120
+
 
         )
 
 
+
         if response.status_code != 200:
 
+
             st.warning(
-                "图片接口调用失败"
+                "图片生成接口失败"
             )
 
-            st.write(response.text)
+
+            st.write(
+                response.text
+            )
+
 
             return None
+
 
 
 
@@ -406,14 +460,20 @@ def generate_ai_image(prompt):
         if result.get("result"):
 
 
-            image = result["result"].get("image")
+            image = result["result"].get(
+                "image"
+            )
 
 
             if image:
 
+
                 return (
+
                     "data:image/png;base64,"
+
                     + image
+
                 )
 
 
@@ -425,15 +485,24 @@ def generate_ai_image(prompt):
     except Exception as e:
 
 
+
         st.warning(
+
             f"图片生成错误：{e}"
+
         )
 
 
         return None
-        # ======================
-# 显示文章和图片
-# ======================
+
+
+
+
+
+# =========================
+# 显示文章
+# =========================
+
 
 if st.session_state.article:
 
@@ -441,53 +510,82 @@ if st.session_state.article:
     article = st.session_state.article
 
 
+
     st.divider()
+
 
 
     st.header(
+
         article["title"]
+
     )
+
 
 
     st.divider()
 
 
 
-    for index, section in enumerate(article["sections"]):
+    image_count = 0
+
+
+
+    for index, section in enumerate(
+
+        article["sections"]
+
+    ):
+
 
 
         # 显示正文
 
+
         st.write(
+
             section["text"]
+
         )
 
 
-        # 生成对应图片
 
-        with st.spinner(
-            f"正在生成第{index+1}张图片..."
-        ):
+        # 只生成3张图片
 
-
-            image = generate_ai_image(
-
-                section["image_prompt"]
-
-            )
+        if image_count < 3:
 
 
 
-        if image:
+            with st.spinner(
+
+                f"正在生成第{image_count+1}张图片..."
+
+            ):
 
 
-            st.image(
 
-                image,
+                image = generate_ai_image(
 
-                caption=section["image_prompt"]
+                    section["image_prompt"]
 
-            )
+                )
+
+
+
+            if image:
+
+
+                st.image(
+
+                    image,
+
+                    caption="AI配图"
+
+                )
+
+
+                image_count += 1
+
 
 
         st.divider()
