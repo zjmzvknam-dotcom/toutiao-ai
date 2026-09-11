@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import base64
 from openai import OpenAI
 
 
@@ -12,7 +13,7 @@ st.set_page_config(
 
 st.title("📝 我的头条创作工具")
 
-st.write("AI爆款标题 + 长文章生成 + 智能配图")
+st.write("AI爆款标题 + 长文章生成 + AI智能配图")
 
 
 topic = st.text_input(
@@ -30,6 +31,10 @@ word_count = st.number_input(
 
 
 
+# =========================
+# DeepSeek文章生成
+# =========================
+
 def deepseek(messages):
 
     client = OpenAI(
@@ -39,100 +44,119 @@ def deepseek(messages):
 
 
     response = client.chat.completions.create(
+
         model="deepseek-chat",
+
         messages=messages
+
     )
+
 
     return response.choices[0].message.content
 
 
 
-def search_image(keyword):
+
+# =========================
+# Cloudflare FLUX 图片生成
+# =========================
+
+def generate_ai_image(prompt):
 
     try:
 
-        url = "https://api.pexels.com/v1/search"
+        account_id = st.secrets["CLOUDFLARE_ACCOUNT_ID"]
 
-        headers = {
-            "Authorization": st.secrets["PEXELS_API_KEY"]
-        }
-
-        params = {
-            "query": keyword,
-            "per_page": 1
-        }
+        token = st.secrets["CLOUDFLARE_API_TOKEN"]
 
 
-        result = requests.get(
-            url,
-            headers=headers,
-            params=params,
-            timeout=10
+        url = (
+            f"https://api.cloudflare.com/client/v4/accounts/"
+            f"{account_id}/ai/run/"
+            f"@cf/black-forest-labs/flux-1-kontext-pro"
         )
 
 
-        if result.status_code != 200:
+        headers = {
+
+            "Authorization": f"Bearer {token}",
+
+            "Content-Type": "application/json"
+
+        }
+
+
+        data = {
+
+            "prompt": prompt
+
+        }
+
+
+        response = requests.post(
+
+            url,
+
+            headers=headers,
+
+            json=data,
+
+            timeout=60
+
+        )
+
+
+        if response.status_code != 200:
+
             return None
 
 
-        data = result.json()
+
+        result = response.json()
 
 
-        if data.get("photos"):
 
-            return data["photos"][0]["src"]["large"]
+        if result.get("result"):
+
+            image_data = result["result"].get("image")
+
+
+            if image_data:
+
+                return (
+                    "data:image/jpeg;base64,"
+                    + image_data
+                )
+
 
 
         return None
+
 
 
     except Exception:
 
         return None
 
-    url = "https://api.pexels.com/v1/search"
 
 
-    headers = {
-        "Authorization": st.secrets["PEXELS_API_KEY"]
-    }
-
-
-    params = {
-        "query": keyword,
-        "per_page": 1
-    }
-
-
-    result = requests.get(
-        url,
-        headers=headers,
-        params=params
-    )
-
-
-    data = result.json()
-
-
-    if data.get("photos"):
-
-        return data["photos"][0]["src"]["large"]
-
-
-    return None
-
+# =========================
+# 状态保存
+# =========================
 
 
 if "titles" not in st.session_state:
+
     st.session_state.titles = []
 
 
+
 if "article" not in st.session_state:
+
     st.session_state.article = None
-
-
-
-# 第一步：生成标题
+# =========================
+# 生成爆款标题
+# =========================
 
 if st.button("🔥 生成爆款标题"):
 
@@ -151,15 +175,15 @@ if st.button("🔥 生成爆款标题"):
                     """
 你是今日头条爆款标题专家。
 
-生成5个标题。
+根据主题生成5个高点击标题。
 
 要求：
-- 高点击率
-- 有悬念
-- 不违规
-- 符合中文用户阅读习惯
+1. 有吸引力
+2. 有悬念
+3. 不违规
+4. 符合今日头条用户习惯
 
-每行一个标题。
+每行输出一个标题。
 """
                 },
 
@@ -172,32 +196,41 @@ if st.button("🔥 生成爆款标题"):
 
 
             st.session_state.titles = [
-                x.strip()
-                for x in text.split("\n")
-                if x.strip()
-            ]
 
+                x.strip()
+
+                for x in text.split("\n")
+
+                if x.strip()
+
+            ]
 
 
     else:
 
-        st.warning("请输入主题")
+        st.warning("请输入文章主题")
 
 
 
 
 
-# 选择标题
+# =========================
+# 选择标题并生成文章
+# =========================
+
 
 if st.session_state.titles:
 
 
-    st.subheader("选择文章标题")
+    st.subheader("请选择文章标题")
 
 
     selected_title = st.radio(
+
         "标题",
+
         st.session_state.titles
+
     )
 
 
@@ -205,29 +238,35 @@ if st.session_state.titles:
     if st.button("✍️ 开始生成文章"):
 
 
-        with st.spinner("正在创作长文章..."):
+        with st.spinner("AI正在创作长文章..."):
 
 
             result = deepseek([
 
+
                 {
                     "role":"system",
+
                     "content":
                     """
 你是一名今日头条高级作者。
 
-请严格输出JSON。
+请严格输出JSON格式。
+
 
 格式：
 
 {
 "title":"",
 "sections":[
+
 {
 "text":"",
-"image_keyword":""
+"image_prompt":""
 }
+
 ]
+
 }
 
 
@@ -236,27 +275,46 @@ if st.session_state.titles:
 1. 总字数接近用户要求。
 2. 分成5个正文部分。
 3. 每部分内容丰富。
-4. image_keyword必须是具体画面。
+4. image_prompt必须是详细图片描述。
 
-例如：
 
-不要：
+图片描述要求：
+
+不要写：
 年轻人压力
 
-要：
-年轻人在出租屋晚上查看工资余额
+
+必须写：
+
+年轻人在出租屋晚上查看手机银行余额，
+桌面有账单和电脑，
+现实摄影风格。
 
 
-文章需要：
-开头吸引读者，
-中间有故事和分析，
-结尾引导评论。
+文章结构：
+
+第一部分：
+吸引读者的开头。
+
+第二部分：
+分析原因。
+
+第三部分：
+真实案例。
+
+第四部分：
+深入分析。
+
+第五部分：
+总结并引导评论。
 """
                 },
 
 
                 {
+
                     "role":"user",
+
                     "content":
                     f"""
 标题：
@@ -267,19 +325,32 @@ if st.session_state.titles:
 目标字数：
 
 {word_count}
+
 """
+
                 }
 
             ])
 
 
 
-            st.session_state.article = json.loads(result)
+            try:
+
+                st.session_state.article = json.loads(result)
+
+
+            except:
+
+                st.error("文章格式解析失败，请重新生成")
 
 
 
 
-# 显示文章
+
+# =========================
+# 显示文章和AI图片
+# =========================
+
 
 if st.session_state.article:
 
@@ -287,32 +358,34 @@ if st.session_state.article:
     article = st.session_state.article
 
 
+
     st.header(article["title"])
 
-
-    image_count = 0
 
 
     for section in article["sections"]:
 
 
+
         st.write(section["text"])
 
 
-        if image_count < 3:
+
+        image = generate_ai_image(
+
+            section["image_prompt"]
+
+        )
 
 
-            img = search_image(
-                section["image_keyword"]
+
+        if image:
+
+
+            st.image(
+
+                image,
+
+                caption=section["image_prompt"]
+
             )
-
-
-            if img:
-
-                st.image(
-                    img,
-                    caption=section["image_keyword"]
-                )
-
-
-                image_count += 1
