@@ -12,21 +12,38 @@ st.set_page_config(
 
 st.title("📝 我的头条创作工具")
 
-st.write("AI爆款标题 + 文章生成 + 智能配图")
+st.write("AI爆款标题 + 长文章生成 + 智能配图")
 
 
 topic = st.text_input(
-    "输入文章主题",
-    placeholder="例如：为什么越来越多人不愿意存钱"
+    "文章主题",
+    placeholder="例如：为什么现在越来越多人不愿意存钱了"
 )
 
 
 word_count = st.number_input(
-    "文章字数",
-    min_value=500,
+    "目标字数",
+    min_value=800,
     max_value=5000,
     value=1500
 )
+
+
+
+def deepseek(messages):
+
+    client = OpenAI(
+        api_key=st.secrets["DEEPSEEK_API_KEY"],
+        base_url="https://api.deepseek.com"
+    )
+
+
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=messages
+    )
+
+    return response.choices[0].message.content
 
 
 
@@ -34,9 +51,11 @@ def search_image(keyword):
 
     url = "https://api.pexels.com/v1/search"
 
+
     headers = {
         "Authorization": st.secrets["PEXELS_API_KEY"]
     }
+
 
     params = {
         "query": keyword,
@@ -44,14 +63,14 @@ def search_image(keyword):
     }
 
 
-    r = requests.get(
+    result = requests.get(
         url,
         headers=headers,
         params=params
     )
 
 
-    data = r.json()
+    data = result.json()
 
 
     if data.get("photos"):
@@ -63,42 +82,16 @@ def search_image(keyword):
 
 
 
-
-def ai_request(messages):
-
-    client = OpenAI(
-        api_key=st.secrets["DEEPSEEK_API_KEY"],
-        base_url="https://api.deepseek.com"
-    )
-
-
-    result = client.chat.completions.create(
-
-        model="deepseek-chat",
-
-        messages=messages
-
-    )
-
-
-    return result.choices[0].message.content
-
-
-
-
 if "titles" not in st.session_state:
-
     st.session_state.titles = []
 
 
-
 if "article" not in st.session_state:
-
     st.session_state.article = None
 
 
 
-
+# 第一步：生成标题
 
 if st.button("🔥 生成爆款标题"):
 
@@ -106,10 +99,10 @@ if st.button("🔥 生成爆款标题"):
     if topic:
 
 
-        with st.spinner("AI正在想标题..."):
+        with st.spinner("正在生成标题..."):
 
 
-            titles = ai_request([
+            text = deepseek([
 
                 {
                     "role":"system",
@@ -117,14 +110,15 @@ if st.button("🔥 生成爆款标题"):
                     """
 你是今日头条爆款标题专家。
 
-根据主题生成5个高点击标题。
+生成5个标题。
 
 要求：
-1. 有吸引力
-2. 不夸张违规
-3. 符合今日头条风格
+- 高点击率
+- 有悬念
+- 不违规
+- 符合中文用户阅读习惯
 
-只输出标题，每行一个。
+每行一个标题。
 """
                 },
 
@@ -136,7 +130,12 @@ if st.button("🔥 生成爆款标题"):
             ])
 
 
-            st.session_state.titles = titles.split("\n")
+            st.session_state.titles = [
+                x.strip()
+                for x in text.split("\n")
+                if x.strip()
+            ]
+
 
 
     else:
@@ -147,37 +146,38 @@ if st.button("🔥 生成爆款标题"):
 
 
 
+# 选择标题
+
 if st.session_state.titles:
 
 
-    st.subheader("请选择一个标题")
+    st.subheader("选择文章标题")
 
 
-    selected = st.radio(
-
-        "标题列表",
-
+    selected_title = st.radio(
+        "标题",
         st.session_state.titles
-
     )
 
 
 
-    if st.button("✍️ 开始写文章"):
+    if st.button("✍️ 开始生成文章"):
 
 
-        with st.spinner("AI正在创作文章..."):
+        with st.spinner("正在创作长文章..."):
 
 
-            article = ai_request([
+            result = deepseek([
 
                 {
                     "role":"system",
                     "content":
                     """
-你是一名今日头条资深作者。
+你是一名今日头条高级作者。
 
-返回JSON格式：
+请严格输出JSON。
+
+格式：
 
 {
 "title":"",
@@ -189,11 +189,30 @@ if st.session_state.titles:
 ]
 }
 
+
 要求：
-3个正文部分。
-每部分对应一个具体图片关键词。
+
+1. 总字数接近用户要求。
+2. 分成5个正文部分。
+3. 每部分内容丰富。
+4. image_keyword必须是具体画面。
+
+例如：
+
+不要：
+年轻人压力
+
+要：
+年轻人在出租屋晚上查看工资余额
+
+
+文章需要：
+开头吸引读者，
+中间有故事和分析，
+结尾引导评论。
 """
                 },
+
 
                 {
                     "role":"user",
@@ -201,9 +220,10 @@ if st.session_state.titles:
                     f"""
 标题：
 
-{selected}
+{selected_title}
 
-字数：
+
+目标字数：
 
 {word_count}
 """
@@ -212,31 +232,33 @@ if st.session_state.titles:
             ])
 
 
-            st.session_state.article = json.loads(article)
+
+            st.session_state.article = json.loads(result)
 
 
 
 
+# 显示文章
 
 if st.session_state.article:
 
 
-    data = st.session_state.article
+    article = st.session_state.article
 
 
-    st.header(data["title"])
+    st.header(article["title"])
 
 
-    image_num = 0
+    image_count = 0
 
 
-    for section in data["sections"]:
+    for section in article["sections"]:
 
 
         st.write(section["text"])
 
 
-        if image_num < 3:
+        if image_count < 3:
 
 
             img = search_image(
@@ -251,4 +273,5 @@ if st.session_state.article:
                     caption=section["image_keyword"]
                 )
 
-                image_num += 1
+
+                image_count += 1
