@@ -113,6 +113,7 @@ def generate_ai_image(prompt):
 
 
         result = response.json()
+        st.write(result)
 
 
 
