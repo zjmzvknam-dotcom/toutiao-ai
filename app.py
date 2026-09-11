@@ -1,47 +1,64 @@
 import streamlit as st
 import requests
 import json
-import base64
 from openai import OpenAI
-CLOUDFLARE_ACCOUNT_ID = "b4313df8a9ade000f8363e51f34cba8d"
 
-CLOUDFLARE_API_TOKEN = st.secrets["CLOUDFLARE_API_TOKEN"]
 
+# ======================
+# 页面设置
+# ======================
 
 st.set_page_config(
-    page_title="我的头条创作工具",
+    page_title="我的头条AI创作工具",
     page_icon="📝"
 )
 
 
-st.title("📝 我的头条创作工具")
+# ======================
+# 读取Secrets
+# ======================
 
-st.write("AI爆款标题 + 长文章生成 + AI智能配图")
+DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
 
+CLOUDFLARE_API_TOKEN = st.secrets["CLOUDFLARE_API_TOKEN"]
+
+CLOUDFLARE_ACCOUNT_ID = st.secrets["CLOUDFLARE_ACCOUNT_ID"]
+
+
+# ======================
+# 标题
+# ======================
+
+st.title("📝 我的头条AI创作工具")
+
+st.write(
+    "AI标题 + 长文章 + AI配图"
+)
+
+
+# ======================
+# 输入
+# ======================
 
 topic = st.text_input(
-    "文章主题",
-    placeholder="例如：为什么现在越来越多人不愿意存钱了"
+    "输入文章主题"
 )
 
 
 word_count = st.number_input(
     "目标字数",
-    min_value=800,
+    min_value=500,
     max_value=5000,
     value=1500
 )
-
-
-
-# =========================
-# DeepSeek文章生成
-# =========================
+# ======================
+# DeepSeek AI
+# ======================
 
 def deepseek(messages):
 
     client = OpenAI(
-        api_key=st.secrets["DEEPSEEK_API_KEY"],
+        api_key=DEEPSEEK_API_KEY,
         base_url="https://api.deepseek.com"
     )
 
@@ -50,7 +67,9 @@ def deepseek(messages):
 
         model="deepseek-chat",
 
-        messages=messages
+        messages=messages,
+
+        temperature=0.8
 
     )
 
@@ -59,121 +78,24 @@ def deepseek(messages):
 
 
 
-
-# =========================
-# Cloudflare FLUX 图片生成
-# =========================
-
-def generate_ai_image(prompt):
-
-    try:
-
-        url = (
-            "https://api.cloudflare.com/client/v4/accounts/"
-            + CLOUDFLARE_ACCOUNT_ID
-            + "/ai/run/"
-            + "@cf/black-forest-labs/flux-1-kontext-pro"
-        )
-
-
-        headers = {
-            "Authorization": 
-            f"Bearer {CLOUDFLARE_API_TOKEN}",
-            "Content-Type": "application/json"
-        }
-
-
-        json_data = {
-            "prompt": prompt
-        }
-
-
-        response = requests.post(
-            url,
-            headers=headers,
-            json=json_data,
-            timeout=60
-        )
-
-
-        if response.status_code != 200:
-            return None
-
-
-        result = response.json()
-        st.write(result)
-
-
-        if result.get("result"):
-
-            image_data = result["result"].get("image")
-
-
-            if image_data:
-
-                return (
-                    "data:image/jpeg;base64,"
-                    + image_data
-                )
-
-
-        return None
-
-
-    except Exception as e:
-
-        st.write(e)
-
-        return None
-
-
-
-        result = response.json()
-        st.write(result)
-
-
-
-        if result.get("result"):
-
-            image_data = result["result"].get("image")
-
-
-            if image_data:
-
-                return (
-                    "data:image/jpeg;base64,"
-                    + image_data
-                )
-
-
-
-        return None
-
-
-
-    except Exception:
-
-        return None
-
-
-
-# =========================
-# 状态保存
-# =========================
-
+# ======================
+# 保存状态
+# ======================
 
 if "titles" not in st.session_state:
 
     st.session_state.titles = []
 
 
-
 if "article" not in st.session_state:
 
     st.session_state.article = None
-# =========================
-# 生成爆款标题
-# =========================
+
+
+
+# ======================
+# 生成标题
+# ======================
 
 if st.button("🔥 生成爆款标题"):
 
@@ -184,39 +106,44 @@ if st.button("🔥 生成爆款标题"):
         with st.spinner("正在生成标题..."):
 
 
-            text = deepseek([
+            result = deepseek([
 
                 {
                     "role":"system",
+
                     "content":
                     """
-你是今日头条爆款标题专家。
+你是一名今日头条爆款标题专家。
 
-根据主题生成5个高点击标题。
+根据用户主题生成5个标题。
 
 要求：
-1. 有吸引力
+
+1. 高点击率
 2. 有悬念
-3. 不违规
-4. 符合今日头条用户习惯
+3. 不夸大违规
+4. 符合中文用户阅读习惯
 
 每行输出一个标题。
 """
                 },
 
+
                 {
                     "role":"user",
+
                     "content":topic
                 }
 
             ])
 
 
+
             st.session_state.titles = [
 
                 x.strip()
 
-                for x in text.split("\n")
+                for x in result.split("\n")
 
                 if x.strip()
 
@@ -225,16 +152,13 @@ if st.button("🔥 生成爆款标题"):
 
     else:
 
-        st.warning("请输入文章主题")
+        st.warning("请输入主题")
 
 
 
-
-
-# =========================
-# 选择标题并生成文章
-# =========================
-
+# ======================
+# 选择标题生成文章
+# ======================
 
 if st.session_state.titles:
 
@@ -251,17 +175,17 @@ if st.session_state.titles:
     )
 
 
-
     if st.button("✍️ 开始生成文章"):
 
 
-        with st.spinner("AI正在创作长文章..."):
+        with st.spinner("AI正在写文章..."):
 
 
             result = deepseek([
 
 
                 {
+
                     "role":"system",
 
                     "content":
@@ -276,51 +200,64 @@ if st.session_state.titles:
 {
 "title":"",
 "sections":[
-
 {
 "text":"",
 "image_prompt":""
 }
-
 ]
-
 }
 
 
 要求：
 
-1. 总字数接近用户要求。
-2. 分成5个正文部分。
-3. 每部分内容丰富。
-4. image_prompt必须是详细图片描述。
+1. 文章总字数控制在目标字数±20%。
+
+例如：
+目标1500字，
+允许1200-1800字。
 
 
-图片描述要求：
+2. 不要为了凑字数重复废话。
 
-不要写：
+3. 分成5个部分。
+
+4. 每部分内容丰富。
+
+5. 每部分生成一个详细图片描述。
+
+
+图片描述必须具体。
+
+错误：
+
 年轻人压力
 
 
-必须写：
+正确：
 
-年轻人在出租屋晚上查看手机银行余额，
-桌面有账单和电脑，
-现实摄影风格。
+年轻人在深夜出租屋内查看手机银行余额，
+桌上放着账单和电脑，
+真实摄影风格。
+
 
 
 文章结构：
 
 第一部分：
-吸引读者的开头。
+吸引人的开头。
+
 
 第二部分：
 分析原因。
 
+
 第三部分：
-真实案例。
+真实故事案例。
+
 
 第四部分：
-深入分析。
+深入观点分析。
+
 
 第五部分：
 总结并引导评论。
@@ -344,7 +281,6 @@ if st.session_state.titles:
 {word_count}
 
 """
-
                 }
 
             ])
@@ -358,51 +294,94 @@ if st.session_state.titles:
 
             except:
 
-                st.error("文章格式解析失败，请重新生成")
+                st.error("文章解析失败，请重新生成
+                         # ======================
+# Cloudflare AI 图片生成
+# ======================
+
+def generate_ai_image(prompt):
+
+    try:
+
+        url = (
+            "https://api.cloudflare.com/client/v4/accounts/"
+            + CLOUDFLARE_ACCOUNT_ID
+            + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
+        )
 
 
+        headers = {
+
+            "Authorization":
+            f"Bearer {CLOUDFLARE_API_TOKEN}",
+
+            "Content-Type":
+            "application/json"
+
+        }
 
 
+        data = {
 
-# =========================
-# 显示文章和AI图片
-# =========================
+            "prompt": prompt
 
-
-if st.session_state.article:
+        }
 
 
-    article = st.session_state.article
+        response = requests.post(
 
+            url,
 
+            headers=headers,
 
-    st.header(article["title"])
+            json=data,
 
-
-
-    for section in article["sections"]:
-
-
-
-        st.write(section["text"])
-
-
-
-        image = generate_ai_image(
-
-            section["image_prompt"]
+            timeout=120
 
         )
 
 
+        if response.status_code != 200:
 
-        if image:
-
-
-            st.image(
-
-                image,
-
-                caption=section["image_prompt"]
-
+            st.warning(
+                "图片接口调用失败"
             )
+
+            st.write(response.text)
+
+            return None
+
+
+
+        result = response.json()
+
+
+
+        if result.get("result"):
+
+
+            image = result["result"].get("image")
+
+
+            if image:
+
+                return (
+                    "data:image/png;base64,"
+                    + image
+                )
+
+
+
+        return None
+
+
+
+    except Exception as e:
+
+
+        st.warning(
+            f"图片生成错误：{e}"
+        )
+
+
+        return None
