@@ -3,6 +3,9 @@ import requests
 import json
 import base64
 from openai import OpenAI
+CLOUDFLARE_ACCOUNT_ID = "b4313df8a9ade000f8363e51f34cba8d"
+
+CLOUDFLARE_API_TOKEN = st.secrets["CLOUDFLARE_API_TOKEN"]
 
 
 st.set_page_config(
