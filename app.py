@@ -12,12 +12,12 @@ st.set_page_config(
 
 st.title("📝 我的头条创作工具")
 
-st.write("AI生成文章 + 智能匹配配图")
+st.write("AI爆款标题 + 文章生成 + 智能配图")
 
 
 topic = st.text_input(
-    "文章主题",
-    placeholder="请输入文章主题"
+    "输入文章主题",
+    placeholder="例如：为什么越来越多人不愿意存钱"
 )
 
 
@@ -44,14 +44,14 @@ def search_image(keyword):
     }
 
 
-    response = requests.get(
+    r = requests.get(
         url,
         headers=headers,
         params=params
     )
 
 
-    data = response.json()
+    data = r.json()
 
 
     if data.get("photos"):
@@ -64,138 +64,191 @@ def search_image(keyword):
 
 
 
+def ai_request(messages):
 
-if st.button("🚀 开始生成"):
+    client = OpenAI(
+        api_key=st.secrets["DEEPSEEK_API_KEY"],
+        base_url="https://api.deepseek.com"
+    )
 
 
-    if not topic:
+    result = client.chat.completions.create(
 
-        st.warning("请输入文章主题")
+        model="deepseek-chat",
+
+        messages=messages
+
+    )
+
+
+    return result.choices[0].message.content
+
+
+
+
+if "titles" not in st.session_state:
+
+    st.session_state.titles = []
+
+
+
+if "article" not in st.session_state:
+
+    st.session_state.article = None
+
+
+
+
+
+if st.button("🔥 生成爆款标题"):
+
+
+    if topic:
+
+
+        with st.spinner("AI正在想标题..."):
+
+
+            titles = ai_request([
+
+                {
+                    "role":"system",
+                    "content":
+                    """
+你是今日头条爆款标题专家。
+
+根据主题生成5个高点击标题。
+
+要求：
+1. 有吸引力
+2. 不夸张违规
+3. 符合今日头条风格
+
+只输出标题，每行一个。
+"""
+                },
+
+                {
+                    "role":"user",
+                    "content":topic
+                }
+
+            ])
+
+
+            st.session_state.titles = titles.split("\n")
 
 
     else:
 
-
-        with st.spinner("AI正在创作文章，请稍等..."):
-
-
-            client = OpenAI(
-                api_key=st.secrets["DEEPSEEK_API_KEY"],
-                base_url="https://api.deepseek.com"
-            )
+        st.warning("请输入主题")
 
 
-            result = client.chat.completions.create(
 
-                model="deepseek-chat",
 
-                messages=[
 
-                    {
-                        "role": "system",
-                        "content":
-                        """
-你是一名今日头条爆款作者。
+if st.session_state.titles:
 
-请严格返回JSON格式。
 
-格式：
+    st.subheader("请选择一个标题")
+
+
+    selected = st.radio(
+
+        "标题列表",
+
+        st.session_state.titles
+
+    )
+
+
+
+    if st.button("✍️ 开始写文章"):
+
+
+        with st.spinner("AI正在创作文章..."):
+
+
+            article = ai_request([
+
+                {
+                    "role":"system",
+                    "content":
+                    """
+你是一名今日头条资深作者。
+
+返回JSON格式：
 
 {
-"title":"文章标题",
+"title":"",
 "sections":[
 {
-"text":"正文段落",
-"image_keyword":"具体图片关键词"
+"text":"",
+"image_keyword":""
 }
 ]
 }
 
 要求：
-
-1. 只生成3个主要正文段落
-2. 每个段落生成一个图片关键词
-3. 图片关键词必须具体
-4. 不要写抽象词
-
-例如：
-
-错误：
-年轻人压力
-
-正确：
-年轻人在出租屋查看账单
-
-错误：
-经济困难
-
-正确：
-家庭计算每月生活支出
+3个正文部分。
+每部分对应一个具体图片关键词。
 """
-                    },
+                },
 
+                {
+                    "role":"user",
+                    "content":
+                    f"""
+标题：
 
-                    {
-                        "role": "user",
-                        "content":
-                        f"""
-主题：
+{selected}
 
-{topic}
-
-
-文章字数：
+字数：
 
 {word_count}
-
-生成适合今日头条阅读的文章。
 """
-                    }
+                }
 
-                ]
+            ])
 
+
+            st.session_state.article = json.loads(article)
+
+
+
+
+
+if st.session_state.article:
+
+
+    data = st.session_state.article
+
+
+    st.header(data["title"])
+
+
+    image_num = 0
+
+
+    for section in data["sections"]:
+
+
+        st.write(section["text"])
+
+
+        if image_num < 3:
+
+
+            img = search_image(
+                section["image_keyword"]
             )
 
 
-            text = result.choices[0].message.content
+            if img:
 
-
-            article = json.loads(text)
-
-
-
-
-        st.success("文章生成完成！")
-
-
-        st.header(article["title"])
-
-
-
-        image_count = 0
-
-
-        for section in article["sections"]:
-
-
-            st.write(section["text"])
-
-
-
-            if image_count < 3:
-
-
-                image = search_image(
-                    section["image_keyword"]
+                st.image(
+                    img,
+                    caption=section["image_keyword"]
                 )
 
-
-                if image:
-
-                    st.image(
-                        image,
-                        caption=section["image_keyword"]
-                    )
-
-
-                    image_count += 1
+                image_num += 1
