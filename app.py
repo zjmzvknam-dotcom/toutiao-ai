@@ -65,55 +65,62 @@ def generate_ai_image(prompt):
 
     try:
 
-        account_id = st.secrets["CLOUDFLARE_ACCOUNT_ID"]
-
-        token = st.secrets["CLOUDFLARE_API_TOKEN"]
-
-
         url = (
-            f"https://api.cloudflare.com/client/v4/accounts/"
-            f"{account_id}/ai/run/"
-            f"@cf/black-forest-labs/flux-1-kontext-pro"
+            "https://api.cloudflare.com/client/v4/accounts/"
+            + CLOUDFLARE_ACCOUNT_ID
+            + "/ai/run/"
+            + "@cf/black-forest-labs/flux-1-kontext-pro"
         )
 
 
         headers = {
-
-            "Authorization": f"Bearer {token}",
-
+            "Authorization": 
+            f"Bearer {CLOUDFLARE_API_TOKEN}",
             "Content-Type": "application/json"
-
         }
 
 
-        data = {
-
+        json_data = {
             "prompt": prompt
-
         }
 
 
         response = requests.post(
-
             url,
-
             headers=headers,
-
-            json=data,
-
+            json=json_data,
             timeout=60
-
         )
 
 
         if response.status_code != 200:
-    if response.status_code != 200:
+            return None
 
-    st.write("Cloudflare错误：")
-    st.write(response.text)
 
-    return None
+        result = response.json()
 
+
+        if result.get("result"):
+
+            image_data = result["result"].get("image")
+
+
+            if image_data:
+
+                return (
+                    "data:image/jpeg;base64,"
+                    + image_data
+                )
+
+
+        return None
+
+
+    except Exception as e:
+
+        st.write(e)
+
+        return None
 
 
 
