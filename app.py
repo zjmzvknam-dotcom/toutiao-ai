@@ -107,7 +107,10 @@ def generate_ai_image(prompt):
 
 
         if response.status_code != 200:
-            if response.status_code != 200:
+if response.status_code != 200:
+
+    st.write("Cloudflare错误：")
+    st.write(response.text)
 
     return None
 
