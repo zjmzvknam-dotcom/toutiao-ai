@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from openai import OpenAI
+import json
 
 
 st.set_page_config(
@@ -11,24 +12,25 @@ st.set_page_config(
 
 st.title("📝 我的头条创作工具")
 
-st.write("AI生成文章 + 自动配图")
+st.write("AI生成文章 + 智能匹配配图")
 
 
 topic = st.text_input(
     "文章主题",
-    placeholder="例如：为什么越来越多人不愿意存钱"
+    placeholder="请输入文章主题"
 )
 
 
 word_count = st.number_input(
     "文章字数",
-    min_value=300,
+    min_value=500,
     max_value=5000,
     value=1500
 )
 
 
-def get_images(keyword):
+
+def search_image(keyword):
 
     url = "https://api.pexels.com/v1/search"
 
@@ -38,37 +40,42 @@ def get_images(keyword):
 
     params = {
         "query": keyword,
-        "per_page": 3
+        "per_page": 1
     }
 
-    response = requests.get(
+
+    r = requests.get(
         url,
         headers=headers,
         params=params
     )
 
-    data = response.json()
 
-    images = []
+    data = r.json()
 
-    for item in data.get("photos", []):
-        images.append(
-            item["src"]["large"]
-        )
 
-    return images
+    if data.get("photos"):
+
+        return data["photos"][0]["src"]["large"]
+
+    return None
+
 
 
 
 if st.button("🚀 开始生成"):
 
+
     if not topic:
 
         st.warning("请输入主题")
 
+
     else:
 
-        with st.spinner("AI正在写文章..."):
+
+        with st.spinner("AI正在规划文章和图片..."):
+
 
             client = OpenAI(
                 api_key=st.secrets["DEEPSEEK_API_KEY"],
@@ -76,7 +83,7 @@ if st.button("🚀 开始生成"):
             )
 
 
-            result = client.chat.completions.create(
+            response = client.chat.completions.create(
 
                 model="deepseek-chat",
 
@@ -85,25 +92,45 @@ if st.button("🚀 开始生成"):
                     {
                         "role":"system",
                         "content":
-                        "你是一名今日头条爆款文章作者。"
+                        """
+你是一名今日头条爆款作者。
+
+请返回JSON格式。
+
+必须包含：
+
+title:
+文章标题
+
+sections:
+文章段落数组，每个段落包含：
+text:正文
+image_keyword:对应图片关键词
+
+例如：
+[
+{
+"text":"正文内容",
+"image_keyword":"年轻人看工资账单"
+}
+]
+
+不要输出其它文字。
+"""
                     },
+
 
                     {
                         "role":"user",
                         "content":
                         f"""
-写一篇今日头条文章。
-
 主题：
 {topic}
 
 字数：
 {word_count}
 
-要求：
-标题吸引人，
-适合手机阅读，
-分段清晰。
+生成适合今日头条的文章。
 """
                     }
 
@@ -112,20 +139,33 @@ if st.button("🚀 开始生成"):
             )
 
 
-            article = result.choices[0].message.content
+            content = response.choices[0].message.content
 
 
-        st.success("文章生成完成")
-
-        st.write(article)
+            article_data = json.loads(content)
 
 
-        st.subheader("🖼 推荐配图")
+
+        st.success("生成完成！")
 
 
-        images = get_images(topic)
+        st.header(article_data["title"])
 
 
-        for img in images:
+        for section in article_data["sections"]:
 
-            st.image(img)
+
+            st.write(section["text"])
+
+
+            img = search_image(
+                section["image_keyword"]
+            )
+
+
+            if img:
+
+                st.image(
+                    img,
+                    caption=section["image_keyword"]
+                )
