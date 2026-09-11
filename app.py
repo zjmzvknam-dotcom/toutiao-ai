@@ -385,3 +385,63 @@ def generate_ai_image(prompt):
 
 
         return None
+        # ======================
+# 显示文章和图片
+# ======================
+
+if st.session_state.article:
+
+
+    article = st.session_state.article
+
+
+    st.divider()
+
+
+    st.header(
+        article["title"]
+    )
+
+
+    st.divider()
+
+
+
+    for index, section in enumerate(article["sections"]):
+
+
+        # 显示正文
+
+        st.write(
+            section["text"]
+        )
+
+
+        # 生成对应图片
+
+        with st.spinner(
+            f"正在生成第{index+1}张图片..."
+        ):
+
+
+            image = generate_ai_image(
+
+                section["image_prompt"]
+
+            )
+
+
+
+        if image:
+
+
+            st.image(
+
+                image,
+
+                caption=section["image_prompt"]
+
+            )
+
+
+        st.divider()
