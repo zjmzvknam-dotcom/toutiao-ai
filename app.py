@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
-from openai import OpenAI
 import json
+from openai import OpenAI
 
 
 st.set_page_config(
@@ -44,21 +44,23 @@ def search_image(keyword):
     }
 
 
-    r = requests.get(
+    response = requests.get(
         url,
         headers=headers,
         params=params
     )
 
 
-    data = r.json()
+    data = response.json()
 
 
     if data.get("photos"):
 
         return data["photos"][0]["src"]["large"]
 
+
     return None
+
 
 
 
@@ -68,13 +70,13 @@ if st.button("🚀 开始生成"):
 
     if not topic:
 
-        st.warning("请输入主题")
+        st.warning("请输入文章主题")
 
 
     else:
 
 
-        with st.spinner("AI正在规划文章和图片..."):
+        with st.spinner("AI正在创作文章，请稍等..."):
 
 
             client = OpenAI(
@@ -83,54 +85,70 @@ if st.button("🚀 开始生成"):
             )
 
 
-            response = client.chat.completions.create(
+            result = client.chat.completions.create(
 
                 model="deepseek-chat",
 
                 messages=[
 
                     {
-                        "role":"system",
+                        "role": "system",
                         "content":
                         """
 你是一名今日头条爆款作者。
 
-请返回JSON格式。
+请严格返回JSON格式。
 
-必须包含：
+格式：
 
-title:
-文章标题
-
-sections:
-文章段落数组，每个段落包含：
-text:正文
-image_keyword:对应图片关键词
-
-例如：
-[
 {
-"text":"正文内容",
-"image_keyword":"年轻人看工资账单"
+"title":"文章标题",
+"sections":[
+{
+"text":"正文段落",
+"image_keyword":"具体图片关键词"
 }
 ]
+}
 
-不要输出其它文字。
+要求：
+
+1. 只生成3个主要正文段落
+2. 每个段落生成一个图片关键词
+3. 图片关键词必须具体
+4. 不要写抽象词
+
+例如：
+
+错误：
+年轻人压力
+
+正确：
+年轻人在出租屋查看账单
+
+错误：
+经济困难
+
+正确：
+家庭计算每月生活支出
 """
                     },
 
 
                     {
-                        "role":"user",
+                        "role": "user",
                         "content":
                         f"""
 主题：
+
 {topic}
 
-字数：
+
+文章字数：
+
 {word_count}
 
-生成适合今日头条的文章。
+生成适合今日头条阅读的文章。
 """
                     }
 
@@ -139,33 +157,45 @@ image_keyword:对应图片关键词
             )
 
 
-            content = response.choices[0].message.content
+            text = result.choices[0].message.content
 
 
-            article_data = json.loads(content)
+            article = json.loads(text)
 
 
 
-        st.success("生成完成！")
+
+        st.success("文章生成完成！")
 
 
-        st.header(article_data["title"])
+        st.header(article["title"])
 
 
-        for section in article_data["sections"]:
+
+        image_count = 0
+
+
+        for section in article["sections"]:
 
 
             st.write(section["text"])
 
 
-            img = search_image(
-                section["image_keyword"]
-            )
+
+            if image_count < 3:
 
 
-            if img:
-
-                st.image(
-                    img,
-                    caption=section["image_keyword"]
+                image = search_image(
+                    section["image_keyword"]
                 )
+
+
+                if image:
+
+                    st.image(
+                        image,
+                        caption=section["image_keyword"]
+                    )
+
+
+                    image_count += 1
