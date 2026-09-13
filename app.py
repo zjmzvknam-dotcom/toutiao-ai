@@ -1,13 +1,7 @@
 import streamlit as st
 import requests
 from openai import OpenAI
-import json
-import base64
 
-
-# ==========================
-# 页面设置
-# ==========================
 
 st.set_page_config(
     page_title="今日头条AI创作工具",
@@ -15,9 +9,9 @@ st.set_page_config(
 )
 
 
-# ==========================
-# 读取密钥
-# ==========================
+# ======================
+# Secrets
+# ======================
 
 DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
 
@@ -27,24 +21,17 @@ CLOUDFLARE_ACCOUNT_ID = st.secrets["CLOUDFLARE_ACCOUNT_ID"]
 
 
 
-# ==========================
-# 标题
-# ==========================
+# ======================
+# 页面
+# ======================
 
-st.title(
-    "📝 今日头条AI创作工具"
+st.title("📝 今日头条AI创作工具")
+
+st.write(
+    "AI标题 + 原创文章 + AI真人配图"
 )
 
 
-st.caption(
-    "AI标题 + 原创文章 + AI配图"
-)
-
-
-
-# ==========================
-# 输入
-# ==========================
 
 topic = st.text_input(
     "请输入文章主题"
@@ -53,38 +40,38 @@ topic = st.text_input(
 
 
 word_count = st.number_input(
-    "文章目标字数",
-    min_value=800,
+    "目标字数",
+    min_value=500,
     max_value=5000,
     value=1500
 )
 
 
 
-# ==========================
-# DeepSeek函数
-# ==========================
+# ======================
+# DeepSeek
+# ======================
 
-def deepseek(messages):
-
+def deepseek(prompt):
 
     client = OpenAI(
-
         api_key=DEEPSEEK_API_KEY,
-
         base_url="https://api.deepseek.com"
-
     )
 
 
     response = client.chat.completions.create(
 
-
         model="deepseek-chat",
 
+        messages=[
 
-        messages=messages,
+            {
+                "role":"user",
+                "content":prompt
+            }
 
+        ],
 
         temperature=0.8
 
@@ -95,15 +82,13 @@ def deepseek(messages):
 
 
 
-# ==========================
+# ======================
 # 状态
-# ==========================
-
+# ======================
 
 if "titles" not in st.session_state:
 
     st.session_state.titles = []
-
 
 
 if "article" not in st.session_state:
@@ -118,71 +103,40 @@ if "selected_title" not in st.session_state:
 
 
 
-# ==========================
+# ======================
 # 生成标题
-# ==========================
-
+# ======================
 
 if st.button("🔥生成爆款标题"):
 
 
-    if topic == "":
+    if topic:
 
 
-        st.warning(
-            "请输入文章主题"
-        )
+        with st.spinner("正在生成标题..."):
 
 
-    else:
+            result = deepseek(f"""
 
+你是一名今日头条爆款标题专家。
 
-        with st.spinner(
-            "正在生成标题..."
-        ):
+根据下面主题生成5个标题：
 
+主题：
+{topic}
 
-            result = deepseek([
-
-
-                {
-
-                    "role":"system",
-
-                    "content":"""
-
-你是今日头条爆款标题专家。
-
-根据主题生成5个标题。
 
 要求：
 
-1. 有点击欲望。
-
-2. 有悬念。
-
-3. 不夸张违规。
-
-4. 符合中文用户阅读习惯。
-
-每行输出一个标题。
-
-"""
-
-                },
+1. 有吸引力
+2. 有悬念
+3. 不违规
+4. 符合中文用户习惯
 
 
-                {
+每行一个标题。
 
-                    "role":"user",
-
-                    "content":topic
-
-                }
-
-
-            ])
-
+""")
 
 
             st.session_state.titles = [
@@ -196,61 +150,70 @@ if st.button("🔥生成爆款标题"):
             ]
 
 
+    else:
+
+        st.warning(
+            "请输入主题"
+        )
+
+
 
 if st.session_state.titles:
 
 
     st.subheader(
-        "请选择标题"
+        "选择标题"
     )
 
 
     st.session_state.selected_title = st.radio(
 
-        "标题列表",
+        "标题",
 
-        st.session_state.titles
-        # ==========================
-# 生成文章
-# ==========================
+        st.session_state.titles# ======================
+# 生成原创文章
+# ======================
 
 
 if st.session_state.selected_title:
 
 
-    if st.button("✍️开始生成文章"):
+    if st.button("✍️生成原创文章"):
 
 
-        with st.spinner(
-            "AI正在创作文章..."
-        ):
+        with st.spinner("AI正在创作文章..."):
 
 
-            article = deepseek([
+            article_prompt = f"""
 
-
-                {
-
-                    "role":"system",
-
-                    "content":"""
-
-你是一名资深今日头条原创作者。
+你是一名今日头条资深原创作者。
 
 
 请根据标题写一篇原创文章。
 
 
-写作要求：
+标题：
+
+{st.session_state.selected_title}
 
 
-1. 像真人作者写作。
+
+目标字数：
+
+{word_count}
 
 
-2. 不要出现AI模板语言。
+
+要求：
+
+1. 内容必须重新组织逻辑。
+
+2. 不允许简单改写网络文章。
+
+3. 不要有明显AI腔。
 
 
-禁止：
+禁止使用：
 
 近年来
 
@@ -263,28 +226,15 @@ if st.session_state.selected_title:
 在这个快速发展的时代
 
 
-3. 不允许简单替换网络文章。
+4. 加入真实生活场景。
 
+5. 加入人物故事。
 
-4. 必须重新组织观点。
+6. 有自己的观点分析。
 
+7. 适合手机阅读。
 
-5. 加入真实生活场景。
-
-
-6. 加入人物故事。
-
-
-7. 有自己的分析。
-
-
-8. 适合手机阅读。
-
-
-9. 分段清晰。
-
-
-10. 不使用Markdown符号。
+8. 分段清晰。
 
 
 文章结构：
@@ -292,17 +242,17 @@ if st.session_state.selected_title:
 
 第一部分：
 
-开头吸引读者。
+吸引读者的开头。
 
 
 第二部分：
 
-分析事情原因。
+分析原因。
 
 
 第三部分：
 
-加入真实案例。
+真实案例。
 
 
 第四部分：
@@ -315,51 +265,32 @@ if st.session_state.selected_title:
 总结并引导评论。
 
 
-字数要求：
+不要使用：
 
-接近用户目标字数。
+#
 
-允许上下浮动20%。
+**
 
+>
 
-不要为了凑字数重复废话。
-
-
-
-"""
-
-                },
+等Markdown符号。
 
 
-                {
-
-                    "role":"user",
-
-                    "content":f"""
-
-标题：
-
-{st.session_state.selected_title}
-
-
-目标字数：
-
-{word_count}
+直接输出文章正文。
 
 
 """
 
-                }
+
+            st.session_state.article = deepseek(
+                article_prompt
+            )
 
 
-            ])
 
-
-
-            st.session_state.article = article
-            # ==========================
-# Cloudflare AI图片生成
-# ==========================
+# ======================
+# 图片生成
+# ======================
 
 
 def generate_ai_image(prompt):
@@ -370,62 +301,52 @@ def generate_ai_image(prompt):
 
         final_prompt = f"""
 
-
 Create a realistic documentary photograph.
 
-
-Scene:
 
 {prompt}
 
 
 
-Style requirements:
+Requirements:
 
+Real human photography.
+
+Modern China daily life.
 
 Real camera photo.
 
-Real human beings.
-
-Modern daily life.
-
-News documentary photography.
+News documentary style.
 
 Natural lighting.
 
 High quality.
 
-Professional photography.
 
 
+Negative:
 
-Strict negative requirements:
+Anime.
 
+Cartoon.
 
-No anime.
+Illustration.
 
-No cartoon.
+Painting.
 
-No illustration.
+Fantasy.
 
-No painting.
+Game character.
 
-No fantasy.
+Ancient costume.
 
-No game characters.
+Ancient people.
 
-No ancient people.
+Text.
 
-No ancient costume.
+Watermark.
 
-No fictional characters.
-
-No text.
-
-No watermark.
-
-No logo.
-
+Logo.
 
 
 """
@@ -440,7 +361,6 @@ No logo.
             + "/ai/run/@cf/black-forest-labs/flux-1-schnell"
 
         )
-
 
 
         headers = {
@@ -461,19 +381,15 @@ No logo.
 
         response = requests.post(
 
-
             url,
 
-
             headers=headers,
-
 
             json={
 
                 "prompt": final_prompt
 
             },
-
 
             timeout=120
 
@@ -482,11 +398,6 @@ No logo.
 
 
         if response.status_code != 200:
-
-
-            st.warning(
-                "图片生成失败"
-            )
 
 
             return None
@@ -505,7 +416,6 @@ No logo.
             )
 
 
-
             if image:
 
 
@@ -518,7 +428,6 @@ No logo.
                 )
 
 
-
         return None
 
 
@@ -527,18 +436,13 @@ No logo.
 
 
         st.warning(
-
-            "图片错误："
-
-            + str(e)
-
+            f"图片错误：{e}"
         )
 
 
-        return None
-        # ==========================
-# 显示文章和图片
-# ==========================
+        return None# ======================
+# 显示文章
+# ======================
 
 
 if st.session_state.article:
@@ -572,21 +476,25 @@ if st.session_state.article:
 
 
 
-    # 提取图片数量
-
     image_prompts = [
 
-        "现代中国年轻人在办公室工作的真实摄影照片",
 
-        "普通家庭生活场景的新闻纪实摄影照片",
+        "一名25岁中国年轻白领晚上在出租屋电脑前工作，桌面有电脑和咖啡，真实摄影，新闻纪实风格",
 
-        "年轻人在城市街道生活的真实摄影照片"
+
+
+        "一名30岁中国普通家庭成员在客厅整理生活账单，现代家庭环境，白天自然光，真实摄影",
+
+
+
+        "一名年轻人在城市街道独自思考未来，现代都市背景，真实相机拍摄，新闻摄影风格"
+
 
     ]
 
 
 
-    image_count = 0
+    count = 0
 
 
 
@@ -594,7 +502,8 @@ if st.session_state.article:
 
 
 
-        if image_count >= 3:
+        if count >= 3:
+
 
             break
 
@@ -602,9 +511,10 @@ if st.session_state.article:
 
         with st.spinner(
 
-            f"正在生成第{image_count+1}张图片..."
+            f"正在生成第{count+1}张图片..."
 
         ):
+
 
 
             image = generate_ai_image(
@@ -627,7 +537,7 @@ if st.session_state.article:
             )
 
 
-            image_count += 1
+            count += 1
 
 
 
@@ -635,13 +545,8 @@ if st.session_state.article:
 
 
 
-# ==========================
-# 页面底部
-# ==========================
-
-
 st.caption(
-    "AI创作助手 | DeepSeek + Cloudflare FLUX"
+    "今日头条AI创作工具 | DeepSeek + Cloudflare FLUX"
 )
 
     )
