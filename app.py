@@ -147,6 +147,38 @@ def generate_article(title, word_count):
 
 def generate_image(prompt):
 
+    try:
+
+        from openai import OpenAI
+
+
+        client = OpenAI(
+            api_key=st.secrets["DEEPSEEK_API_KEY"]
+        )
+
+
+        result = client.images.generate(
+
+            model="dall-e-3",
+
+            prompt=prompt,
+
+            size="1024x1024"
+
+        )
+
+
+        return result.data[0].url
+
+
+    except Exception as e:
+
+        st.error(
+            f"图片接口错误：{e}"
+        )
+
+        return None
+
     url="https://api.openai.com/v1/images/generations"
 
 
