@@ -428,44 +428,46 @@ def generate_ai_image(prompt):
 
 
 
-        final_prompt = f"""
+final_prompt = f"""
+
+Generate a realistic documentary photograph.
 
 {prompt}
 
 
-要求：
+STRICT REQUIREMENTS:
 
-真实摄影照片。
+Real human photography.
 
-新闻纪实摄影风格。
+Not illustration.
 
-现代中国真实生活环境。
+Not anime.
 
-人物自然。
+Not cartoon.
 
-高清照片。
+Not fantasy.
 
+Not game character.
 
-禁止：
+Not ancient costume.
 
-文字。
+Modern China daily life.
 
-水印。
+Real camera photo.
 
-logo。
+Natural lighting.
 
-动漫。
+News documentary style.
 
-漫画。
+People must look like real people.
 
-游戏角色。
+No text.
 
-幻想场景。
+No watermark.
 
-古代人物。
+No logo.
 
 """
-
 
         response = requests.post(
 
