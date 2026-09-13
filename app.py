@@ -270,15 +270,22 @@ if st.session_state.titles:
 
             try:
 
-                st.session_state.article = json.loads(
-                    result
-                )
+    clean_result = result.strip()
+
+    if clean_result.startswith("```"):
+        clean_result = clean_result.replace("```json", "")
+        clean_result = clean_result.replace("```", "")
+
+    st.session_state.article = json.loads(clean_result)
 
 
-            except:
+except Exception as e:
 
-                st.error(
-                    "文章解析失败，请重新生成"
+    st.error("文章解析失败")
+
+    st.write(result)
+
+    st.write(e)
                 )
                 # =========================
 # AI图片生成
