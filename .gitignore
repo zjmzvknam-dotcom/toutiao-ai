@@ -1,0 +1,11 @@
+.env
+.streamlit/secrets.toml
+*.db
+*.sqlite*
+__pycache__/
+.pytest_cache/
+.coverage
+.venv/
+*.py[cod]
+outputs/*
+!outputs/.gitkeep
