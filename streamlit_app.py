@@ -218,7 +218,14 @@ def main() -> None:
                     task_events.append(TaskEvent(task_id=task_id, step=step, status=state))
                 try:
                     selected_search_provider = search_provider() if search_enabled else None
-                    existing_bodies = [item.body for item in repo.list_articles()]
+                    # Compare against the same normalized topic only. A shared
+                    # offline safety template must not make every new topic
+                    # look like a duplicate of an older article.
+                    existing_bodies = [
+                        item.body
+                        for item in repo.list_articles()
+                        if item.topic.strip().casefold() == topic.title.strip().casefold()
+                    ]
                     active_router = router_from_session()
                     workflow = ArticleWorkflow(active_router, selected_search_provider)
                     if generate_variants:
