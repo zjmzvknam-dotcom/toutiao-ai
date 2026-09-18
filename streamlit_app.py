@@ -197,9 +197,10 @@ def main() -> None:
     with create_tab:
         # Keep the latest result above the input form so a rerun never hides
         # the generated article below the fold.
-        if current := st.session_state.get("current_article"):
-            st.success(f"文章已生成：{current.title}。可直接复制、下载或展开右侧的手机预览与核验项。")
-            show_article(current, context="current-top")
+        top_article = st.session_state.get("current_article")
+        if top_article:
+            st.success(f"文章已生成：{top_article.title}。可直接复制、下载或展开右侧的手机预览与核验项。")
+            show_article(top_article, context="current-top")
             st.divider()
         with st.form("create_article"):
             keyword = st.text_input("关键词或选题", placeholder="例如：小米汽车")
@@ -272,6 +273,12 @@ def main() -> None:
                     repo.record_task_event(TaskEvent(task_id=task_id, step="工作流", status="失败：发生未分类错误"))
                     progress.update(label="创作失败", state="error")
                     st.error("创作服务暂时不可用。请检查模型设置后重试；已保存的内容不会受影响。")
+        # On the first submit there was no article before the form, so render
+        # the newly-created result in this same Streamlit run as well.
+        current_after_submit = st.session_state.get("current_article")
+        if current_after_submit and (not top_article or current_after_submit.id != top_article.id):
+            st.success(f"文章已生成：{current_after_submit.title}。下面可直接复制、下载或确认配图。")
+            show_article(current_after_submit, context="current")
         if variants := st.session_state.get("current_variants"):
             st.subheader("本次生成的 5 个差异化角度")
             selected_variant = st.selectbox("查看一篇文章", variants, format_func=lambda item: item.metadata["variant_angle"], key="variant-viewer")
