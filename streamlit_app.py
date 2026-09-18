@@ -9,7 +9,7 @@ import streamlit as st
 
 from app.config.settings import settings
 from app.models.domain import Article, TaskEvent, Topic
-from app.providers import CachedSearchProvider, GDELTDocumentProvider, ModelRouter, MultiModelRouter, MultiSourceTrendProvider, OpenAICompatibleProvider, PexelsImageProvider, ResilientSearchProvider, RoutedModel
+from app.providers import CachedSearchProvider, GDELTDocumentProvider, ModelRouter, MultiModelRouter, MultiSourceTrendProvider, OpenAICompatibleProvider, PexelsImageProvider, ResilientSearchProvider, RoutedModel, WikimediaCommonsImageProvider
 from app.repositories.sqlite import SQLiteRepository
 from app.services.export import markdown, plain_text, word_document
 from app.services.editor import revise
@@ -85,6 +85,9 @@ def show_article(article: Article, *, context: str) -> None:
     with left:
         if article.image.verified and article.image.url:
             st.image(article.image.url, caption=f"已确认图片 · {article.image.source}")
+        elif candidates := st.session_state.get(f"image-candidates-{article.id}", []):
+            st.image(candidates[0].url, caption=f"待人工确认图片候选 · {candidates[0].source}")
+            st.info("这是来源候选，不会自动作为配图发布；请展开右侧“图片候选与人工审核”确认后使用。")
         st.markdown(article.body)
         copy_columns = st.columns(3)
         with copy_columns[0]:
@@ -149,10 +152,11 @@ def show_article(article: Article, *, context: str) -> None:
         with st.expander("图片候选与人工审核"):
             pexels_key = st.session_state.get("pexels_api_key", "")
             if not pexels_key:
-                st.caption("尚未配置 Pexels API Key。图片模块不会用无来源图片替代。")
-            elif st.button("搜索真实来源图片候选", key=f"{context}-{article.id}-image-search"):
+                st.caption("未配置 Pexels Key 时，系统使用无需 Key 的 Wikimedia Commons 公开来源候选；候选不会自动插入，必须人工确认后才会显示在文章中。")
+            if st.button("搜索真实来源图片候选", key=f"{context}-{article.id}-image-search"):
                 try:
-                    candidates = PexelsImageProvider(pexels_key).find(article.topic)
+                    provider = PexelsImageProvider(pexels_key) if pexels_key else WikimediaCommonsImageProvider()
+                    candidates = provider.find(article.topic)
                     st.session_state[f"image-candidates-{article.id}"] = candidates
                 except Exception:
                     st.warning("图片服务暂时不可用；文章仍可正常使用。")
@@ -190,12 +194,18 @@ def main() -> None:
     create_tab, radar_tab, library_tab, settings_tab, cost_tab = st.tabs(["🚀 自动创作", "📡 热点雷达", "📚 我的文章", "⚙️ 模型设置", "💰 成本"])
 
     with create_tab:
+        # Keep the latest result above the input form so a rerun never hides
+        # the generated article below the fold.
+        if current := st.session_state.get("current_article"):
+            st.success(f"文章已生成：{current.title}。可直接复制、下载或展开右侧的手机预览与核验项。")
+            show_article(current, context="current-top")
+            st.divider()
         with st.form("create_article"):
             keyword = st.text_input("关键词或选题", placeholder="例如：小米汽车")
             col1, col2, col3 = st.columns(3)
             length = col1.select_slider("目标字数", options=[600, 900, 1200, 1600, 2200], value=900)
             persona = col2.selectbox("作者人格", ["理性分析型", "温和观察型", "普通人视角", "行业观察型", "知识科普型"])
-            images = col3.checkbox("配图候选（不会自动插入）", value=False)
+            images = col3.checkbox("自动找配图候选（需人工确认）", value=True)
             requirement = st.text_area("写作要求（可选）", placeholder="例如：关注普通消费者的影响，避免未经核实的结论。")
             with st.expander("专业模式"):
                 search_enabled = st.checkbox("使用 GDELT 新闻资料搜索（资料均需人工核验）", value=False)
@@ -237,6 +247,13 @@ def main() -> None:
                         article = articles[0]
                     else:
                         article = workflow.run(topic, length=length, persona=persona, requirement=requirement, with_images=images, use_research=search_enabled, timespan=time_range, existing_bodies=existing_bodies, task_id=task_id, confirmed_high_risk=high_risk_confirmed, progress=emit)
+                        if images:
+                            try:
+                                pexels_key = st.session_state.get("pexels_api_key", "")
+                                provider = PexelsImageProvider(pexels_key) if pexels_key else WikimediaCommonsImageProvider()
+                                st.session_state[f"image-candidates-{article.id}"] = provider.find(article.topic, limit=3)
+                            except Exception:
+                                st.session_state[f"image-candidates-{article.id}"] = []
                         repo.save_article(article)
                         for event in task_events:
                             repo.record_task_event(event)
@@ -254,8 +271,6 @@ def main() -> None:
                     repo.record_task_event(TaskEvent(task_id=task_id, step="工作流", status="失败：发生未分类错误"))
                     progress.update(label="创作失败", state="error")
                     st.error("创作服务暂时不可用。请检查模型设置后重试；已保存的内容不会受影响。")
-        if current := st.session_state.get("current_article"):
-            show_article(current, context="current")
         if variants := st.session_state.get("current_variants"):
             st.subheader("本次生成的 5 个差异化角度")
             selected_variant = st.selectbox("查看一篇文章", variants, format_func=lambda item: item.metadata["variant_angle"], key="variant-viewer")
