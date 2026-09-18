@@ -9,7 +9,8 @@ import streamlit as st
 
 from app.config.settings import settings
 from app.models.domain import Article, TaskEvent, Topic
-from app.providers import CachedSearchProvider, GDELTDocumentProvider, ModelRouter, MultiModelRouter, MultiSourceTrendProvider, OpenAICompatibleProvider, PexelsImageProvider, ResilientSearchProvider, RoutedModel, WikimediaCommonsImageProvider
+from app.providers import CachedSearchProvider, GDELTDocumentProvider, ModelRouter, MultiModelRouter, MultiSourceTrendProvider, OpenAICompatibleProvider, PexelsImageProvider, ResilientSearchProvider, RoutedModel
+from app.providers.images import WikimediaCommonsImageProvider
 from app.repositories.sqlite import SQLiteRepository
 from app.services.export import markdown, plain_text, word_document
 from app.services.editor import revise
