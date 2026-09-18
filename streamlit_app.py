@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from html import escape
+import os
+from app.config.model_config import deployed_model
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -8,7 +9,7 @@ from uuid import uuid4
 import streamlit as st
 
 from app.config.settings import settings
-from app.models.domain import Article, TaskEvent, Topic
+from app.models.domain import Article, TaskEvent, Topic, ImageCandidate
 from app.providers import CachedSearchProvider, GDELTDocumentProvider, ModelRouter, MultiModelRouter, MultiSourceTrendProvider, OpenAICompatibleProvider, PexelsImageProvider, ResilientSearchProvider, RoutedModel
 from app.providers.images import WikimediaCommonsImageProvider
 from app.repositories.sqlite import SQLiteRepository
@@ -63,129 +64,91 @@ def router_from_session() -> ModelRouter | MultiModelRouter:
             resolved_routes = {workflow: RoutedModel(first_profile, enabled_profiles[first_profile]["model"]) for workflow in ("analysis", "writing", "quality")}
         return MultiModelRouter(providers, resolved_routes)
     config = st.session_state.get("model_config", {})
+    if not config.get("api_key"):
+        values = dict(os.environ)
+        try:
+            values.update(dict(st.secrets))
+        except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+            pass
+        config = deployed_model(values)
     if not config.get("enabled") or not config.get("api_key") or not config.get("model"):
         return ModelRouter(None)
     provider = OpenAICompatibleProvider(config["api_key"], config["base_url"])
     return ModelRouter(provider, {"analysis": config["model"], "writing": config["model"], "quality": config["model"]})
 
 
+def save_visible_article(article: Article, context: str) -> None:
+    repository().save_article(article)
+    current = st.session_state.get("current_article")
+    if context == "current" or (current and current.id == article.id):
+        st.session_state["current_article"] = article
+
+
 def show_article(article: Article, *, context: str) -> None:
+    legacy = article.model == "本地降级模板" or "系统基于离线启发式生成的初步判断" in article.body
+    if legacy:
+        st.error("这条历史记录是旧版生成的通用模板，不是可使用的文章。连接写作模型后，请重新生成。")
+        with st.expander("查看旧记录（保留原数据）"):
+            st.text(article.body)
+        return
     st.subheader(article.title)
-    st.caption(f"任务 ID：{article.task_id} · 状态：{article.status} · 模型：{article.model}")
-    readiness = article.metadata.get("readiness")
-    if readiness:
-        if readiness["status"] == "READY":
-            st.success("发布状态：READY（仍建议在最终发布页再次核对链接与排版）")
-        else:
-            st.warning("发布状态：需要人工复核")
-            for blocker in readiness["blockers"]:
-                st.write(f"- {blocker}")
-    if article.metadata.get("warning"):
-        st.warning(article.metadata["warning"])
-    left, right = st.columns([1.1, 0.9])
-    with left:
-        if article.image.verified and article.image.url:
-            st.image(article.image.url, caption=f"已确认图片 · {article.image.source}")
-        elif candidates := st.session_state.get(f"image-candidates-{article.id}", []):
-            st.image(candidates[0].url, caption=f"待人工确认图片候选 · {candidates[0].source}")
-            st.info("这是来源候选，不会自动作为配图发布；请展开右侧“图片候选与人工审核”确认后使用。")
-        st.markdown(article.body)
-        copy_columns = st.columns(3)
-        with copy_columns[0]:
-            render_copy_button(f"{article.title}\n\n{article.body}", "复制全文")
-        with copy_columns[1]:
-            render_copy_button(article.title, "复制标题")
-        with copy_columns[2]:
-            render_copy_button(article.body, "复制正文")
+    st.caption(f"正文 · {len(article.body)} 字 · 已保存。可直接复制正文或下载 Word。")
+    render_copy_button(f"{article.title}\n\n{article.body}", "复制全文")
+    st.download_button("下载 Word", word_document(article), f"{article.id}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key=f"{context}-{article.id}-docx")
+    st.markdown(article.body)
+    if article.image.verified and article.image.url:
+        st.image(article.image.url, caption=article.image.label)
+    st.divider()
+    with st.expander("编辑正文 / 其他下载"):
+        with st.form(f"{context}-{article.id}-edit"):
+            title = st.text_input("标题", value=article.title)
+            body = st.text_area("完整正文", value=article.body, height=400)
+            edited = st.form_submit_button("保存修改")
+        if edited:
+            if title.strip() and body.strip():
+                save_visible_article(article.model_copy(update={"title": title.strip(), "body": body.strip()}), context)
+                st.rerun()
+            st.error("标题和正文不能为空。")
+        render_copy_button(article.body, "复制正文")
         st.download_button("下载 TXT", plain_text(article), f"{article.id}.txt", "text/plain", key=f"{context}-{article.id}-txt")
         st.download_button("下载 Markdown", markdown(article), f"{article.id}.md", "text/markdown", key=f"{context}-{article.id}-md")
-        st.download_button("下载 Word", word_document(article), f"{article.id}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key=f"{context}-{article.id}-docx")
-    with right:
-        st.markdown("#### 手机阅读预览")
-        preview_title = escape(article.title)
-        preview_body = escape(article.body[:500]).replace("\n", "<br><br>")
-        suffix = "…" if len(article.body) > 500 else ""
-        st.markdown(f'<div style="max-width:370px;margin:auto;padding:22px;border:8px solid #252525;border-radius:28px;background:#fff;box-shadow:0 8px 25px #ddd"><h3>{preview_title}</h3><p style="line-height:1.9">{preview_body}{suffix}</p></div>', unsafe_allow_html=True)
-        st.markdown("#### 5 个标题")
-        for option in article.titles:
-            prefix = "⭐ " if option.recommended else ""
-            st.write(f"{prefix}{option.title}（{option.strategy}，准确性 {option.accuracy}）")
-        st.markdown("#### 质量与风险")
-        report = article.quality
-        st.write(f"信息密度 {report.information_density} · 可读性 {report.readability} · 事实风险：{report.fact_risk} · 敏感风险：{report.sensitivity_risk}")
-        for note in report.notes:
-            st.info(note)
-        st.caption(f"图片：{article.image.label}。{article.image.reason}")
-        with st.expander("资料与事实核验状态"):
-            st.caption(f"资料 Provider：{article.metadata.get('research_provider', '未配置')}。所有资料仅为待核验线索，不应自动视为事实。")
-            for index, evidence in enumerate(article.evidence):
-                st.write(f"- {evidence.claim}（{evidence.source_name}，{evidence.confidence}）")
-                if evidence.source_url:
-                    st.link_button("查看原始来源", evidence.source_url, key=f"{context}-{article.id}-evidence-{index}")
-                if evidence.confidence != "已核验":
-                    confirmed_source = st.checkbox("我已核对该来源的原文、时间、主体与正文表述", key=f"{context}-{article.id}-source-confirm-{index}")
-                    if st.button("标记此来源为已核验", key=f"{context}-{article.id}-source-verify-{index}", disabled=not confirmed_source):
-                        evidence_list = list(article.evidence)
-                        evidence_list[index] = evidence.model_copy(update={"confidence": "已核验"})
-                        refreshed = assess_readiness(evidence=evidence_list, image=article.image, image_requested=article.metadata.get("image_requested", False), quality=article.quality)
-                        revised = article.model_copy(update={"evidence": evidence_list, "metadata": {**article.metadata, "readiness": refreshed.model_dump()}})
-                        repository().save_article(revised)
-                        if context == "current":
-                            st.session_state["current_article"] = revised
-                        st.success("来源已标记为人工核验。")
-                        st.rerun()
-        with st.expander("任务进度记录"):
-            events = repository().list_task_events(article.task_id)
-            if events:
-                for event in events:
-                    st.write(f"{event.created_at:%H:%M:%S} · {event.step}：{event.status}")
+    with st.expander("配图：搜索、选择或更换"):
+        st.caption("请填写具体画面，如“黄昏街道”或“中年人背影”。搜索结果仅供挑选，选择后才出现在正文。")
+        query = st.text_input("想要的画面", key=f"{context}-{article.id}-image-query")
+        if st.button("查找配图", key=f"{context}-{article.id}-image-search"):
+            if not query.strip():
+                st.info("先填写想要的画面。")
             else:
-                st.caption("此文章没有可用的历史任务事件。")
-        with st.expander("文章策划"):
-            plan = article.metadata.get("plan")
-            if plan:
-                st.write(f"目标读者：{plan['audience']}")
-                st.write(f"核心问题：{plan['core_question']}")
-                st.write(f"核心观点：{plan['thesis']}")
-                st.write("结构：" + " → ".join(plan["outline"]))
-            else:
-                st.caption("此文章创建于结构化策划上线前。")
-        with st.expander("图片候选与人工审核"):
-            pexels_key = st.session_state.get("pexels_api_key", "")
-            if not pexels_key:
-                st.caption("未配置 Pexels Key 时，系统使用无需 Key 的 Wikimedia Commons 公开来源候选；候选不会自动插入，必须人工确认后才会显示在文章中。")
-            if st.button("搜索真实来源图片候选", key=f"{context}-{article.id}-image-search"):
                 try:
+                    pexels_key = st.session_state.get("pexels_api_key", "")
                     provider = PexelsImageProvider(pexels_key) if pexels_key else WikimediaCommonsImageProvider()
-                    candidates = provider.find(article.topic)
+                    candidates = provider.find(query.strip(), limit=5)
                     st.session_state[f"image-candidates-{article.id}"] = candidates
+                    if not candidates:
+                        st.info("没有找到符合格式和描述的图片，请换一个具体画面。")
                 except Exception:
-                    st.warning("图片服务暂时不可用；文章仍可正常使用。")
-            for index, candidate in enumerate(st.session_state.get(f"image-candidates-{article.id}", [])):
-                st.image(candidate.url, caption=candidate.source)
-                st.warning(candidate.reason)
-                confirmed = st.checkbox("我已人工确认：图片与文章中的人物、产品、时间、事件相符，并已核对来源与许可", key=f"{context}-{article.id}-image-confirm-{index}")
-                if st.button("将此图标记为已确认配图", key=f"{context}-{article.id}-image-approve-{index}", disabled=not confirmed):
-                    approved = candidate.model_copy(update={"verified": True, "label": "真实来源图片（人工确认）", "reason": "已由用户人工确认来源、语义匹配与使用许可；仍建议保留来源页用于发布前复核。"})
-                    revised = article.model_copy(update={"image": approved})
-                    readiness = revised.metadata.get("readiness")
-                    if readiness:
-                        refreshed = assess_readiness(evidence=revised.evidence, image=approved, image_requested=True, quality=revised.quality)
-                        revised = revised.model_copy(update={"metadata": {**revised.metadata, "readiness": refreshed.model_dump()}})
-                    repository().save_article(revised)
-                    if context == "current":
-                        st.session_state["current_article"] = revised
-                    st.success("图片已标记为人工确认配图。")
-                    st.rerun()
-        with st.expander("文章修改助手"):
-            instruction = st.selectbox("事实保留型修改", ["更口语", "增加观点", "扩写", "缩写"], key=f"{context}-{article.id}-revision")
-            if st.button("应用修改", key=f"{context}-{article.id}-revise"):
-                revised = revise(article, instruction)
-                repository().save_article(revised)
-                if context == "current":
-                    st.session_state["current_article"] = revised
-                st.success("已应用本地修改；外部事实没有被新增或改写。")
+                    st.session_state[f"image-candidates-{article.id}"] = []
+                    st.warning("图片搜索暂时不可用，正文仍可复制和下载。")
+        for index, candidate in enumerate(st.session_state.get(f"image-candidates-{article.id}", [])):
+            st.image(candidate.url, caption=candidate.source)
+            confirmed = st.checkbox("这张图适合正文，我已查看来源与使用许可", key=f"{context}-{article.id}-confirm-{index}")
+            if st.button("使用这张配图", key=f"{context}-{article.id}-choose-{index}", disabled=not confirmed):
+                approved = candidate.model_copy(update={"verified": True, "label": "配图（用户选择）"})
+                save_visible_article(article.model_copy(update={"image": approved}), context)
                 st.rerun()
+        if article.image.url and st.button("移除本文配图", key=f"{context}-{article.id}-remove-image"):
+            save_visible_article(article.model_copy(update={"image": ImageCandidate()}), context)
+            st.rerun()
+    with st.expander("参考资料与检查结果"):
+        st.caption(f"写作模型：{article.model}")
+        if article.metadata.get("warning"):
+            st.caption(article.metadata["warning"])
+        for item in article.evidence:
+            if item.source_url:
+                st.write(item.claim)
+                st.link_button(item.source_name, item.source_url)
+        for note in article.quality.notes:
+            st.caption(note)
 
 
 def main() -> None:
@@ -195,19 +158,33 @@ def main() -> None:
     create_tab, radar_tab, library_tab, settings_tab, cost_tab = st.tabs(["🚀 自动创作", "📡 热点雷达", "📚 我的文章", "⚙️ 模型设置", "💰 成本"])
 
     with create_tab:
-        # Keep the latest result above the input form so a rerun never hides
-        # the generated article below the fold.
-        top_article = st.session_state.get("current_article")
-        if top_article:
-            st.success(f"文章已生成：{top_article.title}。可直接复制、下载或展开右侧的手机预览与核验项。")
-            show_article(top_article, context="current-top")
-            st.divider()
+        active_router = router_from_session()
+        if not active_router.model_for("writing"):
+            st.error("尚未连接写作模型。旧版显示的通用模板无法当作文章使用，请先在下方连接模型。")
+            with st.expander("连接写作模型", expanded=True):
+                with st.form("quick_model_connection"):
+                    quick_base = st.text_input("接口地址", value="https://api.deepseek.com")
+                    quick_model = st.text_input("模型名称", value="deepseek-chat")
+                    quick_key = st.text_input("API Key", type="password")
+                    connect = st.form_submit_button("连接并检查")
+                if connect:
+                    if not quick_key.strip() or not quick_model.strip():
+                        st.error("请填写 API Key 和模型名称。")
+                    else:
+                        ok, message = OpenAICompatibleProvider(quick_key, quick_base).test_connection(model=quick_model)
+                        if ok:
+                            st.session_state["model_config"] = {"enabled": True, "api_key": quick_key, "base_url": quick_base, "model": quick_model}
+                            st.rerun()
+                        st.error(message)
+                st.caption("密钥只用于本次连接。若希望刷新网页后仍可用，可由部署者配置 Streamlit Secrets 中的 DEEPSEEK_API_KEY。")
+        result_area = st.container()
         with st.form("create_article"):
             keyword = st.text_input("关键词或选题", placeholder="例如：小米汽车")
             col1, col2, col3 = st.columns(3)
             length = col1.select_slider("目标字数", options=[600, 900, 1200, 1600, 2200], value=900)
             persona = col2.selectbox("作者人格", ["理性分析型", "温和观察型", "普通人视角", "行业观察型", "知识科普型"])
-            images = col3.checkbox("自动找配图候选（需人工确认）", value=True)
+            images = False
+            col3.caption("生成后可在正文下方选择配图")
             requirement = st.text_area("写作要求（可选）", placeholder="例如：关注普通消费者的影响，避免未经核实的结论。")
             with st.expander("专业模式"):
                 search_enabled = st.checkbox("使用 GDELT 新闻资料搜索（资料均需人工核验）", value=False)
@@ -249,13 +226,6 @@ def main() -> None:
                         article = articles[0]
                     else:
                         article = workflow.run(topic, length=length, persona=persona, requirement=requirement, with_images=images, use_research=search_enabled, timespan=time_range, existing_bodies=existing_bodies, task_id=task_id, confirmed_high_risk=high_risk_confirmed, progress=emit)
-                        if images:
-                            try:
-                                pexels_key = st.session_state.get("pexels_api_key", "")
-                                provider = PexelsImageProvider(pexels_key) if pexels_key else WikimediaCommonsImageProvider()
-                                st.session_state[f"image-candidates-{article.id}"] = provider.find(article.topic, limit=3)
-                            except Exception:
-                                st.session_state[f"image-candidates-{article.id}"] = []
                         repo.save_article(article)
                         for event in task_events:
                             repo.record_task_event(event)
@@ -265,6 +235,8 @@ def main() -> None:
                         repo.record_usage(provider_name, active_router.model_for("writing"), "writing", tokens=usage.get("total_tokens", 0), task_id=article.task_id)
                     progress.update(label="创作完成", state="complete")
                     st.session_state["current_article"] = article
+                    st.session_state.pop("current_variants", None) if not generate_variants else None
+                    st.rerun()
                 except ValueError as exc:
                     repo.record_task_event(TaskEvent(task_id=task_id, step="工作流", status=f"拒绝：{exc}"))
                     progress.update(label="需要调整选题", state="error")
@@ -273,12 +245,11 @@ def main() -> None:
                     repo.record_task_event(TaskEvent(task_id=task_id, step="工作流", status="失败：发生未分类错误"))
                     progress.update(label="创作失败", state="error")
                     st.error("创作服务暂时不可用。请检查模型设置后重试；已保存的内容不会受影响。")
-        # On the first submit there was no article before the form, so render
-        # the newly-created result in this same Streamlit run as well.
-        current_after_submit = st.session_state.get("current_article")
-        if current_after_submit and (not top_article or current_after_submit.id != top_article.id):
-            st.success(f"文章已生成：{current_after_submit.title}。下面可直接复制、下载或确认配图。")
-            show_article(current_after_submit, context="current")
+        with result_area:
+            current_article = st.session_state.get("current_article")
+            if current_article:
+                show_article(current_article, context="current")
+                st.divider()
         if variants := st.session_state.get("current_variants"):
             st.subheader("本次生成的 5 个差异化角度")
             selected_variant = st.selectbox("查看一篇文章", variants, format_func=lambda item: item.metadata["variant_angle"], key="variant-viewer")

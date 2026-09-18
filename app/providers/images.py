@@ -62,7 +62,7 @@ class WikimediaCommonsImageProvider(ImageProvider):
             "gsrnamespace": 6,
             "gsrlimit": min(max(limit, 1), 10),
             "prop": "imageinfo",
-            "iiprop": "url|extmetadata",
+            "iiprop": "url|extmetadata|mime",
             "iiurlwidth": 1200,
             "format": "json",
             "formatversion": 2,
@@ -72,10 +72,23 @@ class WikimediaCommonsImageProvider(ImageProvider):
         pages = response.json().get("query", {}).get("pages", [])
         candidates: list[ImageCandidate] = []
         for page in pages if isinstance(pages, list) else []:
-            info = page.get("imageinfo", [{}])[0] if isinstance(page, dict) else {}
+            infos = page.get("imageinfo", []) if isinstance(page, dict) else []
+            if not infos or not isinstance(infos[0], dict):
+                continue
+            info = infos[0]
+            if info.get("mime") not in {"image/jpeg", "image/png", "image/webp"}:
+                continue
             url = info.get("thumburl") or info.get("url")
             page_url = f"https://commons.wikimedia.org/?curid={page.get('pageid')}" if isinstance(page, dict) else ""
             title = str(page.get("title", "")) if isinstance(page, dict) else ""
-            if isinstance(url, str) and url and page_url:
+            metadata = info.get("extmetadata", {})
+            description = metadata.get("ImageDescription", {}).get("value", "")
+            license_name = metadata.get("LicenseShortName", {}).get("value", "")
+            # Search engines can match full text inside scanned books. Require
+            # an actual still image, a license, and explicit description match.
+            import re
+            terms = re.findall(r"[\w]+", query.casefold())
+            matched = any(term in (title + " " + description).casefold() for term in terms)
+            if isinstance(url, str) and url.startswith("https://") and page_url and license_name and matched:
                 candidates.append(ImageCandidate(url=url, source=f"Wikimedia Commons · {title} · {page_url}", label="真实来源候选", verified=False, reason=f"Commons 检索候选，查询词：{query}。尚未完成语义与许可核验。"))
         return candidates

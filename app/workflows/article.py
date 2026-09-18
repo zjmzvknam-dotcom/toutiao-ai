@@ -66,6 +66,8 @@ class ArticleWorkflow:
         if topic.risk == "高" and not confirmed_high_risk:
             emit("风险门槛", "需要用户确认：高风险题材不会自动扩写")
             raise RiskConfirmationRequired("该选题属于高风险题材。请在专业模式确认你会核验事实、避免医疗/投资建议及未证实指控后再继续。")
+        if not self.router.model_for("writing"):
+            raise ValueError("尚未连接写作模型，无法生成文章。请在页面的模型连接区填写 API Key 和模型名称；已有文章会保留。")
         emit("分析关键词", "完成")
         emit("规划选题角度", "完成")
         research = self._research(topic.title, timespan) if use_research else ResearchResult(provider="未启用", warning="用户未启用资料搜索。")
@@ -78,7 +80,15 @@ class ArticleWorkflow:
         prompt = (f"为今日头条写一篇约{length}字中文文章，主题：{topic.title}。人格：{plan.persona}。"
                   "只能陈述用户提供或来源明确的事实；不确定信息必须明确标注。不要编造数据、引文或现场细节。"
                   f"附加要求：{requirement}\n核心问题：{plan.core_question}\n核心观点：{plan.thesis}\n结构：{'；'.join(plan.outline)}\n待人工核验的资料线索（不得超出它们推断事实）：\n{citations}")
-        result = with_fallback(lambda: self.router.generate("writing", prompt) or fallback(), fallback, "模型写作")
+        prompt += f"\n选题角度：{topic.angle}。直接输出完整文章正文，不输出写作计划、待补充占位语或系统状态。情感、生活随笔采用贴题的叙述与观点，不套用新闻分析框架；虚构场景不得冒充真实采访。"
+        try:
+            body = self.router.generate("writing", prompt)
+            if not isinstance(body, str) or len(body.strip()) < 80:
+                raise ValueError("incomplete response")
+        except Exception:
+            raise ValueError("写作模型本次未能返回完整文章。请检查连接、额度或稍后重试；没有保存模板冒充文章，之前的正文仍保留。") from None
+        from app.core.resilience import ServiceResult
+        result = ServiceResult(value=body.strip())
         emit("正在写作", "完成" if not result.warning else result.warning)
         titles = _titles(topic.title)
         emit("生成标题", "完成：已生成 5 个不同策略标题")
@@ -100,7 +110,7 @@ class ArticleWorkflow:
         status = TaskStatus.PARTIAL_SUCCESS if warning or with_images else TaskStatus.SUCCESS
         article_kwargs = {"task_id": task_id} if task_id else {}
         readiness = assess_readiness(evidence=evidence, image=image, image_requested=with_images, quality=quality)
-        return Article(topic=topic.title, title=titles[0].title, body=result.value or fallback(), model=self.router.model_for("writing") or "本地降级模板", status=status, titles=titles, evidence=evidence, image=image, quality=quality, metadata={"warning": warning, "requested_length": length, "persona": persona, "research_provider": research.provider, "plan": plan.model_dump(), "readiness": readiness.model_dump(), "image_requested": with_images}, **article_kwargs)
+        return Article(topic=topic.title, title=topic.title, body=result.value, model=self.router.model_for("writing"), status=status, titles=titles, evidence=evidence, image=image, quality=quality, metadata={"warning": warning, "requested_length": length, "persona": persona, "research_provider": research.provider, "plan": plan.model_dump(), "readiness": readiness.model_dump(), "image_requested": with_images, "generation_kind": "model"}, **article_kwargs)
 
     def _research(self, query: str, timespan: str) -> ResearchResult:
         if not self.search_provider:
