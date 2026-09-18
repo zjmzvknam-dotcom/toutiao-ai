@@ -91,7 +91,7 @@ class ArticleWorkflow:
         quality = assess(result.value or fallback(), topic.risk)
         similarity = highest_similarity(result.value or fallback(), existing_bodies or [])
         if similarity >= 0.82:
-            raise ValueError("与历史文章高度同质化；请更换选题角度或补充新的可核验资料后再生成。")
+            quality.notes.append("与历史文章相似度较高；文章仍已生成，请在发布前更换角度、补充新来源或人工去重。")
         quality.notes.extend(verification_notes(research.evidence, result.value or fallback()))
         quality.notes.append(f"历史相似度初筛：{similarity:.0%}。该评分只用于发现潜在重复，不替代人工判断。")
         emit("质量与风险检测", "完成")

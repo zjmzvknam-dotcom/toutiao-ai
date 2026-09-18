@@ -64,12 +64,9 @@ def test_workflow_isolated_from_search_failure() -> None:
     assert "搜索服务暂时不可用" in article.metadata["warning"]
 
 
-def test_workflow_rejects_near_duplicate() -> None:
+def test_workflow_warns_but_keeps_near_duplicate_available() -> None:
     topic = analyze_topic("小米汽车")
     first = ArticleWorkflow(ModelRouter(None)).run(topic, length=600, persona="理性分析型")
-    try:
-        ArticleWorkflow(ModelRouter(None)).run(topic, length=600, persona="理性分析型", existing_bodies=[first.body])
-    except ValueError as exc:
-        assert "高度同质化" in str(exc)
-    else:
-        raise AssertionError("expected duplicate rejection")
+    second = ArticleWorkflow(ModelRouter(None)).run(topic, length=600, persona="理性分析型", existing_bodies=[first.body])
+    assert any("相似度较高" in note for note in second.quality.notes)
+    assert second.body
