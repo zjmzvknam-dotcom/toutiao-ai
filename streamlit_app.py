@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from html import escape
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import streamlit as st
 
 from app.config.settings import settings
-from app.models.domain import Article, TaskEvent
-from app.providers import CachedSearchProvider, GDELTDocumentProvider, ModelRouter, MultiModelRouter, OpenAICompatibleProvider, PexelsImageProvider, ResilientSearchProvider, RoutedModel
+from app.models.domain import Article, TaskEvent, Topic
+from app.providers import CachedSearchProvider, GDELTDocumentProvider, ModelRouter, MultiModelRouter, MultiSourceTrendProvider, OpenAICompatibleProvider, PexelsImageProvider, ResilientSearchProvider, RoutedModel
 from app.repositories.sqlite import SQLiteRepository
 from app.services.export import markdown, plain_text, word_document
 from app.services.editor import revise
@@ -28,6 +30,24 @@ def repository() -> SQLiteRepository:
 @st.cache_resource
 def search_provider() -> ResilientSearchProvider:
     return ResilientSearchProvider(CachedSearchProvider(GDELTDocumentProvider()))
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def live_trends_snapshot() -> tuple[list[dict], list[str], str]:
+    """Refresh public trend signals at most every 15 minutes per app worker."""
+    topics, warnings, refreshed_at = MultiSourceTrendProvider().fetch(limit=30)
+    if not topics:
+        snapshot = Path("data/hot_topics.json")
+        try:
+            cached = json.loads(snapshot.read_text(encoding="utf-8"))
+            topics = [Topic.model_validate(row) for row in cached.get("topics", [])]
+            topics = [topic.model_copy(update={"source": f"{topic.source}（每日缓存）"}) for topic in topics]
+            warnings.append("实时源暂时不可用，当前展示 GitHub Actions 最近一次每日快照。")
+            refreshed_at = cached.get("refreshed_at") or refreshed_at.isoformat()
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+    refreshed_label = refreshed_at if isinstance(refreshed_at, str) else refreshed_at.isoformat()
+    return [topic.model_dump(mode="json") for topic in topics], warnings, refreshed_label
 
 
 def router_from_session() -> ModelRouter | MultiModelRouter:
@@ -236,16 +256,31 @@ def main() -> None:
 
     with radar_tab:
         st.subheader("今日热点雷达")
-        st.info("当前未配置合法稳定的实时趋势 Provider；此处仅展示已保存的用户选题，不将其伪装为实时热搜。")
-        topics = repo.list_topics()
-        if topics:
-            exploding = sum(1 for item in topics if item.growth >= 70)
-            high_value = sum(1 for item in topics if item.content_value >= 70 and item.competition <= 50)
-            risky = sum(1 for item in topics if item.risk != "低")
+        live_rows, live_warnings, live_refreshed_at = live_trends_snapshot()
+        live_topics = [Topic.model_validate(row) for row in live_rows]
+        if live_topics:
+            st.success(f"已接入实时趋势源：{', '.join(sorted({item.source for item in live_topics}))}。最近刷新：{live_refreshed_at.replace('T', ' ')[:19]} UTC；数据仅作为选题线索，发布前仍需核验。")
+            if live_warnings:
+                st.warning("；".join(live_warnings))
+            if st.button("立即刷新热点（清除 15 分钟缓存）", key="refresh-live-trends"):
+                live_trends_snapshot.clear()
+                st.rerun()
+            exploding = sum(1 for item in live_topics if item.growth >= 70)
+            high_value = sum(1 for item in live_topics if item.content_value >= 70 and item.competition <= 50)
+            risky = sum(1 for item in live_topics if item.risk != "低")
             metrics = st.columns(3)
             metrics[0].metric("快速上升", exploding)
             metrics[1].metric("冷门高价值", high_value)
             metrics[2].metric("高风险提醒", risky)
+            st.dataframe([{"选题": item.title, "实时来源": item.source, "热度": item.heat, "增长": item.growth, "竞争": item.competition, "爆款潜力指数": item.potential, "风险": item.risk} for item in live_topics], width="stretch", hide_index=True)
+        else:
+            st.warning("实时趋势源暂时没有返回数据；已降级展示已保存的用户选题，不将其伪装为实时热搜。")
+            if live_warnings:
+                st.caption("；".join(live_warnings))
+
+        topics = repo.list_topics()
+        if topics:
+            st.caption("已保存的用户选题")
             st.dataframe([{"选题": item.title, "来源": item.source, "热度": item.heat, "增长": item.growth, "竞争": item.competition, "爆款潜力指数": item.potential, "风险": item.risk, "追踪": "是" if item.tracked else "否"} for item in topics], width="stretch", hide_index=True)
             chosen_topic = st.selectbox("选择选题进行追踪", topics, format_func=lambda item: item.title, key="tracked-topic")
             if st.button("切换追踪状态", key="toggle-tracking"):
