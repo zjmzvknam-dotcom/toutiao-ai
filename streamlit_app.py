@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import base64
 from app.config.model_config import deployed_model
 import json
 from pathlib import Path
@@ -12,6 +13,9 @@ from app.config.settings import settings
 from app.models.domain import Article, TaskEvent, Topic, ImageCandidate
 from app.providers import CachedSearchProvider, GDELTDocumentProvider, ModelRouter, MultiModelRouter, MultiSourceTrendProvider, OpenAICompatibleProvider, PexelsImageProvider, ResilientSearchProvider, RoutedModel
 from app.providers.images import WikimediaCommonsImageProvider
+from app.providers.image_generation import configured_generator, DEFAULT_IMAGE_MODEL
+from app.services.personas import PROFILES
+from app.services.illustrations import illustrate, inline_content
 from app.repositories.sqlite import SQLiteRepository
 from app.services.export import markdown, plain_text, word_document
 from app.services.editor import revise
@@ -84,6 +88,16 @@ def save_visible_article(article: Article, context: str) -> None:
         st.session_state["current_article"] = article
 
 
+def image_config() -> dict:
+    values = dict(os.environ)
+    try:
+        values.update(dict(st.secrets))
+    except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+        pass
+    values.update(st.session_state.get("ai_image_config", {}))
+    return values
+
+
 def show_article(article: Article, *, context: str) -> None:
     legacy = article.model == "本地降级模板" or "系统基于离线启发式生成的初步判断" in article.body
     if legacy:
@@ -95,7 +109,16 @@ def show_article(article: Article, *, context: str) -> None:
     st.caption(f"正文 · {len(article.body)} 字 · 已保存。可直接复制正文或下载 Word。")
     render_copy_button(f"{article.title}\n\n{article.body}", "复制全文")
     st.download_button("下载 Word", word_document(article), f"{article.id}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key=f"{context}-{article.id}-docx")
-    st.markdown(article.body)
+    image_report = article.metadata.get("ai_images", {})
+    if image_report:
+        (st.warning if image_report.get("failed") else st.caption)(image_report["status"])
+    if not article.illustrations:
+        st.markdown(article.body)
+    else:
+        for paragraph, illustrations in inline_content(article):
+            st.markdown(paragraph)
+            for illustration in illustrations:
+                st.image(base64.b64decode(illustration.image_b64), caption=illustration.label)
     if article.image.verified and article.image.url:
         st.image(article.image.url, caption=article.image.label)
     st.divider()
@@ -106,13 +129,20 @@ def show_article(article: Article, *, context: str) -> None:
             edited = st.form_submit_button("保存修改")
         if edited:
             if title.strip() and body.strip():
-                save_visible_article(article.model_copy(update={"title": title.strip(), "body": body.strip()}), context)
+                changed = body.strip() != article.body.strip()
+                metadata = dict(article.metadata)
+                if changed and article.illustrations:
+                    metadata["ai_images"] = {"status": "正文已修改，旧 AI 配图已移除以免错位。", "failed": False}
+                save_visible_article(article.model_copy(update={"title": title.strip(), "body": body.strip(), "illustrations": [] if changed else article.illustrations, "metadata": metadata}), context)
                 st.rerun()
             st.error("标题和正文不能为空。")
         render_copy_button(article.body, "复制正文")
         st.download_button("下载 TXT", plain_text(article), f"{article.id}.txt", "text/plain", key=f"{context}-{article.id}-txt")
         st.download_button("下载 Markdown", markdown(article), f"{article.id}.md", "text/markdown", key=f"{context}-{article.id}-md")
     with st.expander("配图：搜索、选择或更换"):
+        if article.illustrations and st.button("移除 AI 配图（保留正文）", key=f"{context}-{article.id}-remove-ai-images"):
+            save_visible_article(article.model_copy(update={"illustrations": [], "metadata": {**article.metadata, "ai_images": {"status": "AI 配图已移除，正文保留。", "failed": False}}}), context)
+            st.rerun()
         st.caption("请填写具体画面，如“黄昏街道”或“中年人背影”。搜索结果仅供挑选，选择后才出现在正文。")
         query = st.text_input("想要的画面", key=f"{context}-{article.id}-image-query")
         if st.button("查找配图", key=f"{context}-{article.id}-image-search"):
@@ -182,14 +212,15 @@ def main() -> None:
             keyword = st.text_input("关键词或选题", placeholder="例如：小米汽车")
             col1, col2, col3 = st.columns(3)
             length = col1.select_slider("目标字数", options=[600, 900, 1200, 1600, 2200], value=900)
-            persona = col2.selectbox("作者人格", ["理性分析型", "温和观察型", "普通人视角", "行业观察型", "知识科普型"])
-            images = False
-            col3.caption("生成后可在正文下方选择配图")
+            persona = col2.selectbox("作者人格", list(PROFILES))
+            images = col3.checkbox("在文章中插入 AI 配图", value=False)
+            col3.caption("默认关闭，关闭时图片费用为零。开启需在模型设置配置图片服务。")
             requirement = st.text_area("写作要求（可选）", placeholder="例如：关注普通消费者的影响，避免未经核实的结论。")
             with st.expander("专业模式"):
                 search_enabled = st.checkbox("使用 GDELT 新闻资料搜索（资料均需人工核验）", value=False)
                 time_range = st.selectbox("资料时间范围", ["1h", "6h", "24h", "3d", "7d"], index=2)
                 generate_variants = st.checkbox("一个选题生成 5 篇不同角度文章", value=False)
+                st.caption("多角度模式开启配图时，只为第一篇配图，避免一次产生五倍图片费用。")
                 high_risk_confirmed = st.checkbox("我确认：高风险题材仅作谨慎信息整理，发布前将人工核验事实、来源、合规与专业建议边界", value=False)
             submitted = st.form_submit_button("开始创作", type="primary")
         if submitted:
@@ -225,14 +256,23 @@ def main() -> None:
                         st.session_state["current_variants"] = articles
                         article = articles[0]
                     else:
-                        article = workflow.run(topic, length=length, persona=persona, requirement=requirement, with_images=images, use_research=search_enabled, timespan=time_range, existing_bodies=existing_bodies, task_id=task_id, confirmed_high_risk=high_risk_confirmed, progress=emit)
+                        article = workflow.run(topic, length=length, persona=persona, requirement=requirement, with_images=False, use_research=search_enabled, timespan=time_range, existing_bodies=existing_bodies, task_id=task_id, confirmed_high_risk=high_risk_confirmed, progress=emit)
                         repo.save_article(article)
                         for event in task_events:
                             repo.record_task_event(event)
-                    if active_router.model_for("writing"):
-                        provider_name = active_router.provider_for("writing") if isinstance(active_router, MultiModelRouter) else "default"
-                        usage = active_router.usage_for("writing")
-                        repo.record_usage(provider_name, active_router.model_for("writing"), "writing", tokens=usage.get("total_tokens", 0), task_id=article.task_id)
+                    # Persist usable text before contacting an optional image service.
+                    st.session_state["current_article"] = article
+                    if images:
+                        progress.write("正文已保存，正在按段落生成 AI 配图…")
+                        article = illustrate(article, active_router, configured_generator(image_config()), enabled=True)
+                        repo.save_article(article)
+                        if generate_variants:
+                            articles[0] = article
+                    for usage in active_router.usage_log:
+                        repo.record_usage(**usage, task_id=article.task_id)
+                    for _ in range(article.metadata.get("ai_images", {}).get("calls", 0)):
+                        cfg = image_config()
+                        repo.record_usage("Hugging Face", str(cfg.get("AI_IMAGE_MODEL", DEFAULT_IMAGE_MODEL)), "AI配图", task_id=article.task_id)
                     progress.update(label="创作完成", state="complete")
                     st.session_state["current_article"] = article
                     st.session_state.pop("current_variants", None) if not generate_variants else None
@@ -347,6 +387,23 @@ def main() -> None:
         if saved_image:
             st.session_state["pexels_api_key"] = pexels_key
             st.success("图片配置已保存到本次会话。检索结果仍需人工审核。")
+        with st.expander("AI 生图配置（云端推理，无需本地 GPU）"):
+            image_values = image_config()
+            st.caption("采用 Hugging Face Inference Providers；与写作模型密钥独立。需要有推理权限和额度的 Token。模型和 Provider 可更换。")
+            with st.form("ai_image_settings"):
+                hf_token = st.text_input("Hugging Face Token", type="password", help="留空保留部署密钥；不写入文章或 GitHub。")
+                image_model = st.text_input("AI 图片模型", value=str(image_values.get("AI_IMAGE_MODEL", DEFAULT_IMAGE_MODEL)), placeholder="例如 black-forest-labs/FLUX.1-schnell")
+                image_provider = st.text_input("AI 图片 Provider", value=str(image_values.get("AI_IMAGE_PROVIDER", "auto")))
+                save_ai_images = st.form_submit_button("保存 AI 生图配置")
+            if save_ai_images:
+                config = {"AI_IMAGE_MODEL": image_model.strip(), "AI_IMAGE_PROVIDER": image_provider.strip() or "auto"}
+                if hf_token.strip():
+                    config["HF_TOKEN"] = hf_token.strip()
+                elif st.session_state.get("ai_image_config", {}).get("HF_TOKEN"):
+                    config["HF_TOKEN"] = st.session_state["ai_image_config"]["HF_TOKEN"]
+                st.session_state["ai_image_config"] = config
+                st.success("配置已保存至本次会话。勾选配图并生成文章时才会调用生图服务。")
+            st.caption("云端持久配置：HF_TOKEN、AI_IMAGE_MODEL、AI_IMAGE_PROVIDER。生成费用以 Provider 账单为准，不承诺免费。")
         if st.button("测试连接"):
             if not profiles:
                 st.error("请先保存至少一个模型配置档。")
@@ -358,7 +415,7 @@ def main() -> None:
 
     with cost_tab:
         st.subheader("成本监控")
-        st.caption("仅记录 Provider、模型、工作流、请求次数、可用 token 与成本估算；不会存储 API Key 或完整 Prompt。当前通用兼容接口无法可靠返回 token/cost，故显示为 0。")
+        st.caption("记录写作、局部润色、配图规划与图片请求次数，以及接口返回的 token。费用尚未接入账单，估算 0 不代表免费；实际金额以服务商账单为准。不存储密钥或完整 Prompt。")
         total_columns = st.columns(4)
         current_article = st.session_state.get("current_article")
         totals = [repo.task_usage_totals(current_article.task_id) if current_article else {"requests": 0, "tokens": 0, "cost": 0.0}, repo.usage_totals("today"), repo.usage_totals("week"), repo.usage_totals("month")]

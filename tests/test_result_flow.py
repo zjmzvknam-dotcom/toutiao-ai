@@ -62,3 +62,20 @@ def test_deployment_deepseek_config():
     cfg = deployed_model({"DEEPSEEK_API_KEY": "test-only"})
     assert cfg["model"] == "deepseek-chat"
     assert cfg["enabled"]
+
+
+def test_ai_checkbox_defaults_off_and_failure_keeps_visible_body(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.config.model_config.deployed_model", lambda values: {"api_key": "test-only", "enabled": True, "base_url": "https://example.com", "model": "fake"})
+    monkeypatch.setattr("app.providers.openai_compatible.OpenAICompatibleProvider.generate", lambda *a, **kw: BODY)
+    monkeypatch.setattr("app.providers.image_generation.configured_generator", lambda values: None)
+    app = isolated_app(monkeypatch, tmp_path).run(timeout=15)
+    checkbox = next(w for w in app.checkbox if w.label == "在文章中插入 AI 配图")
+    assert checkbox.value is False
+    assert len(next(w for w in app.selectbox if w.label == "作者人格").options) == 10
+    checkbox.check()
+    next(w for w in app.text_input if w.label == "关键词或选题").set_value("周末生活")
+    next(w for w in app.button if w.label == "开始创作").click().run(timeout=15)
+    assert not app.exception
+    assert app.session_state["current_article"].body == BODY
+    assert any(w.value == BODY for w in app.markdown)
+    assert any("配图未生成" in w.value for w in app.warning)

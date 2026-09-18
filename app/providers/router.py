@@ -14,6 +14,7 @@ class ModelRoute:
 class ModelRouter:
     def __init__(self, provider: ModelProvider | None, routes: dict[str, str] | None = None) -> None:
         self.provider = provider
+        self.usage_log: list[dict] = []
         self.routes = routes or {"analysis": "", "writing": "", "quality": ""}
 
     def model_for(self, workflow: str) -> str:
@@ -22,7 +23,7 @@ class ModelRouter:
     def generate(self, workflow: str, prompt: str) -> str | None:
         if not self.provider or not self.model_for(workflow):
             return None
-        return self.provider.generate(prompt, model=self.model_for(workflow))
+        return _logged_generate(self, self.provider, "default", workflow, prompt)
 
     def usage_for(self, workflow: str) -> dict[str, int]:
         return dict(getattr(self.provider, "last_usage", {})) if self.provider else {}
@@ -39,6 +40,7 @@ class MultiModelRouter:
 
     def __init__(self, providers: dict[str, ModelProvider], routes: dict[str, RoutedModel]) -> None:
         self.providers = providers
+        self.usage_log: list[dict] = []
         self.routes = routes
 
     def model_for(self, workflow: str) -> str:
@@ -53,10 +55,20 @@ class MultiModelRouter:
         route = self.routes.get(workflow) or self.routes.get("writing")
         if not route or not route.model or route.profile_id not in self.providers:
             return None
-        return self.providers[route.profile_id].generate(prompt, model=route.model)
+        return _logged_generate(self, self.providers[route.profile_id], route.profile_id, workflow, prompt)
 
     def usage_for(self, workflow: str) -> dict[str, int]:
         route = self.routes.get(workflow) or self.routes.get("writing")
         if not route:
             return {}
         return dict(getattr(self.providers.get(route.profile_id), "last_usage", {}))
+
+
+def _logged_generate(router, provider, provider_name, workflow, prompt):
+    usage = {}
+    try:
+        result = provider.generate(prompt, model=router.model_for(workflow))
+        usage = router.usage_for(workflow)
+        return result
+    finally:
+        router.usage_log.append({"provider": provider_name, "model": router.model_for(workflow), "workflow": workflow, "tokens": usage.get("total_tokens", 0)})

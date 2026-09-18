@@ -99,6 +99,17 @@ class ImageCandidate(BaseModel):
     reason: str = "未配置或无法验证图片来源，遵循宁缺毋滥原则。"
 
 
+class ArticleIllustration(BaseModel):
+    paragraph_index: int = Field(ge=0)
+    paragraph_hash: str
+    subject: str
+    prompt: str
+    image_b64: str
+    provider: str
+    model: str
+    label: str = "AI生成示意图 · 非现场照片"
+
+
 class QualityReport(BaseModel):
     information_density: int
     readability: int
@@ -126,6 +137,7 @@ class Article(BaseModel):
     titles: list[TitleOption] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     image: ImageCandidate = Field(default_factory=ImageCandidate)
+    illustrations: list[ArticleIllustration] = Field(default_factory=list)
     quality: QualityReport
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
